@@ -22,25 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build dashboard
-        run: pnpm --filter dashboard build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
-
+      # The dashboard is a STANDALONE Next.js app under dashboard/ — NOT a pnpm
+      # workspace (no root pnpm-lock.yaml / pnpm-workspace.yaml), so a root
+      # `pnpm install --frozen-lockfile` and `pnpm --filter dashboard` cannot
+      # work. Vercel builds the app remotely (project Root Directory = dashboard),
+      # so there is no local install/build step here — we only trigger the deploy.
+      # working-directory MUST be the repo root: the Vercel project already
+      # appends Root Directory=dashboard, so pointing the action at dashboard/
+      # would resolve to dashboard/dashboard and fail.
       - name: Deploy to Vercel (production)
         uses: amondnet/vercel-action@v25
         with:
@@ -48,7 +37,7 @@ jobs:
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-args: '--prod'
-          working-directory: dashboard
+          working-directory: .
 
   deploy-functions:
     name: Deploy Supabase edge functions

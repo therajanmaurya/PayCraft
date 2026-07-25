@@ -226,24 +226,24 @@ export async function cashfreeSyncProduct(
 export async function googlePlaySyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<void> {
+): Promise<{ error?: string }> {
   const { tenantId, productId, body, existingPlayProductId } = opts
   try {
-    if (body.type !== "subscription") return
+    if (body.type !== "subscription") return {}
 
     const { data: status } = await supabase
       .rpc("tenant_providers_store_status", { p_tenant_id: tenantId, p_provider: "google_play" })
       .single<{ connected: boolean; config: Record<string, any> }>()
-    if (!status?.connected) return
+    if (!status?.connected) return { error: "Google Play is not connected for this tenant" }
 
     const { data: decrypted } = await supabase
       .rpc("tenant_providers_decrypt_store_key", { p_tenant_id: tenantId, p_provider: "google_play" })
       .single<{ credential: string | null; config: Record<string, any> }>()
-    if (!decrypted?.credential) return
+    if (!decrypted?.credential) return { error: "no stored Google Play service-account credential" }
     const packageName = decrypted.config?.package_name
     if (!packageName) {
       console.error("[products] google play sync skipped: no package_name in tenant store config")
-      return
+      return { error: "no package_name in Google Play store config" }
     }
 
     const prices = buildPriceInputs(body).map((p) => ({
@@ -266,8 +266,11 @@ export async function googlePlaySyncProduct(
       p_play_product_id: result.playProductId,
       p_app_store_product_id: null,
     })
+    return {}
   } catch (e: any) {
-    console.error("[products] google play sync failed:", e?.message ?? String(e))
+    const msg = e?.message ?? String(e)
+    console.error("[products] google play sync failed:", msg)
+    return { error: msg }
   }
 }
 
@@ -280,24 +283,24 @@ export async function googlePlaySyncProduct(
 export async function appStoreSyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<void> {
+): Promise<{ error?: string }> {
   const { tenantId, productId, body, existingAppStoreProductId } = opts
   try {
-    if (body.type !== "subscription") return
+    if (body.type !== "subscription") return {}
 
     const { data: status } = await supabase
       .rpc("tenant_providers_store_status", { p_tenant_id: tenantId, p_provider: "app_store" })
       .single<{ connected: boolean; config: Record<string, any> }>()
-    if (!status?.connected) return
+    if (!status?.connected) return { error: "App Store is not connected for this tenant" }
 
     const { data: decrypted } = await supabase
       .rpc("tenant_providers_decrypt_store_key", { p_tenant_id: tenantId, p_provider: "app_store" })
       .single<{ credential: string | null; config: Record<string, any> }>()
-    if (!decrypted?.credential) return
+    if (!decrypted?.credential) return { error: "no stored App Store .p8 private key" }
     const cfg = decrypted.config ?? {}
     if (!cfg.key_id || !cfg.issuer_id || !cfg.bundle_id) {
       console.error("[products] app store sync skipped: missing key_id/issuer_id/bundle_id in tenant store config")
-      return
+      return { error: "missing key_id/issuer_id/bundle_id in App Store store config" }
     }
 
     const prices = buildPriceInputs(body).map((p) => ({
@@ -325,7 +328,10 @@ export async function appStoreSyncProduct(
       p_play_product_id: null,
       p_app_store_product_id: result.appStoreProductId,
     })
+    return {}
   } catch (e: any) {
-    console.error("[products] app store sync failed:", e?.message ?? String(e))
+    const msg = e?.message ?? String(e)
+    console.error("[products] app store sync failed:", msg)
+    return { error: msg }
   }
 }

@@ -1,4 +1,12 @@
 import { playAccessToken, type PlayServiceAccountJson } from "./store-jwt"
+// SINGLE SOURCE OF TRUTH for minor-unit semantics: prices in tenant_pricing are
+// generated/stored by pricing-template.ts using THIS set to decide whether an
+// amount is whole-units (zero-decimal, e.g. IDR/COP/JPY/VND) or ×100 minor
+// units. Any consumer that reads amount_cents back MUST use the same set, or it
+// mis-scales the price — a divergent local copy (the old Stripe-style list here
+// omitted IDR + COP) is exactly what sent Play "IDR 898.92" for a Rp 89,892
+// price and got rejected as below the IDR minimum.
+import { ZERO_DECIMAL_CURRENCIES } from "./pricing-template-data"
 
 /**
  * Create / update a Google Play subscription (+ auto-renewing base plan) for a
@@ -46,11 +54,6 @@ export interface GooglePlaySyncResult {
   created: boolean
 }
 
-const ZERO_DECIMAL_CURRENCIES = new Set([
-  "BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF",
-  "UGX", "VND", "VUV", "XAF", "XOF", "XPF",
-])
-
 // Minimal ISO-4217 currency → CLDR region map for the common PayCraft set.
 // Unmapped currencies are skipped (logged) rather than guessed.
 const CURRENCY_REGION: Record<string, string> = {
@@ -71,11 +74,18 @@ function playBillingPeriod(interval: string | null | undefined): string {
   }
 }
 
-/** Play product ids: lowercase, [a-z0-9._-], must start+end alphanumeric, ≤ 40 chars. */
+/**
+ * Play SUBSCRIPTION product ids: lowercase letters, digits, underscore (_) and
+ * period (.) only — must start with a letter/number, ≤ 40 chars. Crucially,
+ * HYPHENS are NOT allowed here (unlike base-plan ids, which do allow them), so a
+ * SKU like "pro-monthly" must become "pro_monthly" or Play rejects the create
+ * with 400 "Subscription ID is malformed". Anything outside the allowed set
+ * (including "-") maps to underscore.
+ */
 function sanitizePlayProductId(sku: string): string {
-  let id = sku.toLowerCase().replace(/[^a-z0-9._-]/g, ".").replace(/^[._-]+|[._-]+$/g, "")
+  let id = sku.toLowerCase().replace(/[^a-z0-9._]/g, "_").replace(/^[._]+|[._]+$/g, "")
   if (!id) id = "product"
-  return id.slice(0, 40).replace(/[._-]+$/g, "") || "product"
+  return id.slice(0, 40).replace(/[._]+$/g, "") || "product"
 }
 
 /** Base plan ids: lowercase, [a-z0-9-], ≤ 63 chars. */
@@ -161,7 +171,15 @@ export async function syncProductToGooglePlay(
   }
 
   // 2. Not found → CREATE subscription + one auto-renewing base plan.
+  //
+  // Play's base-plan pricing is keyed by REGION, not currency, and the API
+  // rejects the whole create with 400 "Region code X is duplicated." if the
+  // same regionCode appears twice. Our currency→region map is many-to-one
+  // (e.g. every euro-zone price resolves to DE), so a tenant pricing matrix
+  // that carries two prices landing on the same region MUST be collapsed to a
+  // single regionalConfig — first price for a region wins, deterministically.
   const regionalConfigs: Array<Record<string, unknown>> = []
+  const seenRegions = new Set<string>()
   for (const { currency, amountCents } of prices) {
     const region = CURRENCY_REGION[currency.toUpperCase()]
     if (!region) {
@@ -170,6 +188,13 @@ export async function syncProductToGooglePlay(
       )
       continue
     }
+    if (seenRegions.has(region)) {
+      console.warn(
+        `[googleplay-product-sync] region ${region} already priced (from an earlier currency); skipping duplicate ${currency} price for ${productId}`,
+      )
+      continue
+    }
+    seenRegions.add(region)
     regionalConfigs.push({
       regionCode: region,
       newSubscriberAvailability: true,
