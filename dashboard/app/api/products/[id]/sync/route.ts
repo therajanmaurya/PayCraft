@@ -153,6 +153,8 @@ export async function POST(
       googlePlayReport.message = "native store sync only applies to subscription products"
     } else if (after?.play_product_id) {
       googlePlayReport.status = "ok"
+      // Synced, but the base plan may still be DRAFT until the app is published.
+      if (res.warning) googlePlayReport.message = res.warning
     } else {
       googlePlayReport.status = "failed"
       googlePlayReport.message =

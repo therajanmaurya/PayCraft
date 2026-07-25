@@ -27,13 +27,25 @@ const SA_JSON = JSON.stringify({
 })
 
 /** GET probe → 404 (absent), POST create → 200. Returns the fetch mock. */
-function mockCreatePath() {
+function mockCreatePath(opts: { activateOk?: boolean } = {}) {
+  const activateOk = opts.activateOk ?? true
   const fetchMock = jest
     .fn()
     // 1) GET subscriptions.get → 404 (not found → create branch)
     .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" })
     // 2) POST subscriptions.create → 200 ok
     .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "{}" })
+    // 3) POST basePlans:activate → ok (or 400 app-not-published)
+    .mockResolvedValueOnce(
+      activateOk
+        ? { ok: true, status: 200, text: async () => "{}" }
+        : {
+            ok: false,
+            status: 400,
+            text: async () =>
+              JSON.stringify({ error: { code: 400, message: "The app is not published.", status: "FAILED_PRECONDITION" } }),
+          },
+    )
   ;(global as unknown as { fetch: unknown }).fetch = fetchMock
   return fetchMock
 }
@@ -147,4 +159,45 @@ test("keeps distinct regions and skips unmapped currencies", async () => {
     (c: any) => c.regionCode,
   )
   expect(regions).toEqual(["US", "IN"])
+})
+
+test("activates the base plan after create → result.activated = true", async () => {
+  const fetchMock = mockCreatePath({ activateOk: true })
+
+  const result = await syncProductToGooglePlay(
+    { serviceAccountJson: SA_JSON, packageName: "com.example.app" },
+    "prod-act",
+    "pro-monthly",
+    "Pro Monthly",
+    "month",
+    [{ currency: "USD", amountCents: 999 }],
+  )
+
+  // 3rd fetch is the activate POST to the correct :activate endpoint.
+  const [activateUrl, activateInit] = fetchMock.mock.calls[2]
+  expect(activateUrl).toContain("/subscriptions/pro_monthly/basePlans/pro-monthly-autorenew:activate")
+  expect(activateInit.method).toBe("POST")
+  expect(result.activated).toBe(true)
+  expect(result.activationError).toBeUndefined()
+})
+
+test("activation is best-effort: an app-not-published 400 does NOT fail the sync", async () => {
+  const fetchMock = mockCreatePath({ activateOk: false })
+
+  const result = await syncProductToGooglePlay(
+    { serviceAccountJson: SA_JSON, packageName: "com.example.app" },
+    "prod-act2",
+    "pro-annual",
+    "Pro Annual",
+    "year",
+    [{ currency: "USD", amountCents: 9950 }],
+  )
+
+  // The subscription still synced (id returned), but activation is flagged.
+  expect(result.playProductId).toBe("pro_annual")
+  expect(result.created).toBe(true)
+  expect(result.activated).toBe(false)
+  expect(result.activationError).toMatch(/not activated/i)
+  expect(result.activationError).toMatch(/not published/i)
+  expect(fetchMock).toHaveBeenCalledTimes(3) // get + create + activate (no throw)
 })

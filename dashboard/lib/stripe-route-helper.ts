@@ -226,7 +226,7 @@ export async function cashfreeSyncProduct(
 export async function googlePlaySyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; warning?: string }> {
   const { tenantId, productId, body, existingPlayProductId } = opts
   try {
     if (body.type !== "subscription") return {}
@@ -266,6 +266,17 @@ export async function googlePlaySyncProduct(
       p_play_product_id: result.playProductId,
       p_app_store_product_id: null,
     })
+    // The product synced, but its base plan may still be DRAFT (Play blocks
+    // activation until the app is published). Surface that as a non-fatal
+    // warning so the operator knows to upload an APK + re-sync, rather than
+    // believing the subscription is already live/purchasable.
+    if (!result.activated) {
+      return {
+        warning:
+          result.activationError ??
+          "synced, but the Play base plan is still DRAFT — publish the app on Play (upload an APK/AAB), then re-sync to activate it",
+      }
+    }
     return {}
   } catch (e: any) {
     const msg = e?.message ?? String(e)

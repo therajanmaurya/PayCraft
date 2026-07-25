@@ -376,6 +376,9 @@ export async function POST() {
           sku: row.sku,
           display_name: row.display_name,
           status: "ok",
+          // Synced, but the base plan may still be DRAFT (activation blocked
+          // until the app is published) — carry that note even on success.
+          message: res.warning,
         })
       } else {
         googlePlayReports.push({
