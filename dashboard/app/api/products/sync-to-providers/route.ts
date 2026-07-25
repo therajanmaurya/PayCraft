@@ -359,7 +359,7 @@ export async function POST() {
       continue
     }
     try {
-      await googlePlaySyncProduct(supabase, {
+      const res = await googlePlaySyncProduct(supabase, {
         tenantId: tenant.id,
         productId: row.id,
         body,
@@ -376,6 +376,9 @@ export async function POST() {
           sku: row.sku,
           display_name: row.display_name,
           status: "ok",
+          // Synced, but the base plan may still be DRAFT (activation blocked
+          // until the app is published) — carry that note even on success.
+          message: res.warning,
         })
       } else {
         googlePlayReports.push({
@@ -384,7 +387,8 @@ export async function POST() {
           display_name: row.display_name,
           status: "failed",
           message:
-            "sync helper returned without populating play_product_id — check that google_play credentials + package_name are configured (server logs carry the Play API error)",
+            res.error ??
+            "sync helper returned without populating play_product_id — check that google_play credentials + package_name are configured",
         })
       }
     } catch (e: any) {
@@ -412,7 +416,7 @@ export async function POST() {
       continue
     }
     try {
-      await appStoreSyncProduct(supabase, {
+      const res = await appStoreSyncProduct(supabase, {
         tenantId: tenant.id,
         productId: row.id,
         body,
@@ -437,7 +441,8 @@ export async function POST() {
           display_name: row.display_name,
           status: "failed",
           message:
-            "sync helper returned without populating app_store_product_id — check that app_store credentials (key_id/issuer_id/bundle_id + .p8) are configured (server logs carry the ASC API error)",
+            res.error ??
+            "sync helper returned without populating app_store_product_id — check that app_store credentials (key_id/issuer_id/bundle_id + .p8) are configured",
         })
       }
     } catch (e: any) {
