@@ -11,6 +11,7 @@ import com.android.billingclient.api.BillingClient.BillingResponseCode
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.GetBillingConfigParams
 import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
@@ -18,6 +19,7 @@ import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import com.android.billingclient.api.acknowledgePurchase
+import com.android.billingclient.api.getBillingConfig
 import com.android.billingclient.api.queryProductDetails
 import com.android.billingclient.api.queryPurchasesAsync
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -147,6 +149,43 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         appContext.startActivity(intent)
+    }
+
+    /**
+     * Play billing storefront country — `getBillingConfig().countryCode`. This is where the Play
+     * payment account lives (the true billing region), NOT the device UI locale. Lazily connects
+     * like [purchase] does; returns null on connect failure or when Play reports no config.
+     */
+    override suspend fun storefrontCountry(): String? {
+        val connect = ensureConnected()
+        if (connect.responseCode != BillingResponseCode.OK) return null
+        val result = billingClient.getBillingConfig(GetBillingConfigParams.newBuilder().build())
+        if (result.billingResult.responseCode != BillingResponseCode.OK) return null
+        return result.billingConfig?.countryCode?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * The store's own localized SUBS price — the first pricing phase of the first subscription
+     * offer (`formattedPrice` / `priceCurrencyCode` / `priceAmountMicros`). Null when the product
+     * is not on Play, has no offer, or any field is missing.
+     */
+    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? {
+        val connect = ensureConnected()
+        if (connect.responseCode != BillingResponseCode.OK) return null
+        val productDetails = queryProductDetails(productId) ?: return null
+        val phase = productDetails.subscriptionOfferDetails
+            ?.firstOrNull()
+            ?.pricingPhases
+            ?.pricingPhaseList
+            ?.firstOrNull()
+            ?: return null
+        val currency = phase.priceCurrencyCode?.takeIf { it.isNotBlank() } ?: return null
+        val formatted = phase.formattedPrice?.takeIf { it.isNotBlank() } ?: return null
+        return NativeDisplayPrice(
+            formatted = formatted,
+            currencyCode = currency,
+            amountMicros = phase.priceAmountMicros,
+        )
     }
 
     private suspend fun queryProductDetails(productId: String): ProductDetails? {

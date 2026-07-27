@@ -1,6 +1,9 @@
 package com.mobilebytelabs.paycraft.model
 
+import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
 import com.mobilebytelabs.paycraft.config.ProductDto
+import com.mobilebytelabs.paycraft.config.PriceDto
+import com.mobilebytelabs.paycraft.config.SuiteConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -127,7 +130,54 @@ class ProductTest {
             attachesToProductId = null,
         )
         // SuiteConfig with no products → trial still returns null per contract
-        val config = com.mobilebytelabs.paycraft.config.SuiteConfig(tenantId = "t1")
+        val config = SuiteConfig(tenantId = "t1")
         assertNull(trial.displayPrice(config))
+    }
+
+    private fun monthlySub() = Product.Subscription(
+        id = "p1",
+        sku = "sub-monthly",
+        displayName = "Monthly",
+        displayOrder = 0,
+        interval = Product.Subscription.Interval.MONTH,
+        basePrice = Money(999, "USD"),
+    )
+
+    private fun cloudGbpConfig() = SuiteConfig(
+        tenantId = "t1",
+        products = listOf(
+            ProductDto(
+                id = "p1",
+                sku = "sub-monthly",
+                type = "subscription",
+                displayName = "Monthly",
+                interval = "month",
+                basePriceCents = 999,
+                baseCurrency = "USD",
+                displayOrder = 0,
+                // The bug: cloud resolves a GBP price for a GB device locale.
+                resolvedPrice = PriceDto(amountCents = 599, currency = "GBP", source = "locale"),
+            ),
+        ),
+    )
+
+    @Test
+    fun displayPrice_prefersNativePrice_overCloud() {
+        // Native store price (₹799.00 = 799_000_000 micros) is the store truth and must WIN over
+        // the cloud GBP price → Money(79900 paise, INR). This is the paywall-currency fix.
+        val native = NativeDisplayPrice(formatted = "₹799.00", currencyCode = "INR", amountMicros = 799_000_000L)
+        assertEquals(Money(79900, "INR"), monthlySub().displayPrice(cloudGbpConfig(), native))
+    }
+
+    @Test
+    fun displayPrice_usesCloud_whenNativePriceNull() {
+        // No native price (web-checkout lane / unresolved) → existing cloud-resolved behavior.
+        assertEquals(Money(599, "GBP"), monthlySub().displayPrice(cloudGbpConfig(), nativePrice = null))
+    }
+
+    @Test
+    fun displayPrice_fallsBackToBasePrice_whenNoCloudAndNoNative() {
+        // No products in config, no native price → SDK-side base price (USD).
+        assertEquals(Money(999, "USD"), monthlySub().displayPrice(SuiteConfig(tenantId = "t1")))
     }
 }

@@ -29,7 +29,31 @@ interface StoreKit2Bridge {
 
     /** `AppStore.showManageSubscriptions(in:)` — the StoreKit2 native manage/cancel sheet (D7). */
     suspend fun showManageSubscriptions()
+
+    /**
+     * `Storefront.current?.countryCode` — the App Store storefront the signed-in Apple ID buys
+     * from (the true billing region). Null when unavailable.
+     */
+    suspend fun storefrontCountry(): String?
+
+    /**
+     * `Product.products(for:)` → the store's own localized price for [productId]:
+     * `Product.displayPrice` + `priceFormatStyle.currencyCode` + `price` (Decimal → micros).
+     * Null when the product is unavailable in the current storefront.
+     */
+    suspend fun displayPrice(productId: String): StoreKit2Price?
 }
+
+/**
+ * One StoreKit2 `Product`'s localized price, flattened to device-free primitives so `commonMain`
+ * pricing can consume it without a StoreKit dependency. Mirrors
+ * [com.mobilebytelabs.paycraft.billing.NativeDisplayPrice].
+ *
+ * @param formatted     `Product.displayPrice` — the store-formatted localized string.
+ * @param currencyCode  `Product.priceFormatStyle.currencyCode` — ISO 4217.
+ * @param amountMicros  `Product.price` (Decimal) scaled to micro-units (× 1_000_000).
+ */
+data class StoreKit2Price(val formatted: String, val currencyCode: String, val amountMicros: Long)
 
 /**
  * One verified StoreKit2 `Transaction`, flattened to device-free primitives so `commonMain`

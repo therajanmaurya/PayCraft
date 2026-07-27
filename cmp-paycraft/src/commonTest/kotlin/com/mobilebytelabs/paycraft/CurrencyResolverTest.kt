@@ -14,22 +14,106 @@ class CurrencyResolverTest {
     private fun plan(sku: String, currency: String, rank: Int) =
         BillingPlan(id = sku, name = sku, price = "x", interval = "month", rank = rank, currency = currency)
 
-    // ── resolveCountry: override → device → configLocale → "US" ──────────────────────────
+    // ── resolveCountry: override → store storefront → device → configLocale → "US" ────────
 
     @Test fun country_overrideWins() {
-        assertEquals("GB", CurrencyResolver.resolveCountry(override = "GB", deviceCountry = "IN", configLocale = "US"))
+        assertEquals(
+            "GB",
+            CurrencyResolver.resolveCountry(
+                override = "GB",
+                storeStorefront = "IN",
+                deviceCountry = "IN",
+                configLocale = "US",
+            ),
+        )
     }
 
     @Test fun country_deviceWhenNoOverride() {
-        assertEquals("IN", CurrencyResolver.resolveCountry(override = null, deviceCountry = "IN", configLocale = "US"))
+        assertEquals(
+            "IN",
+            CurrencyResolver.resolveCountry(
+                override = null,
+                storeStorefront = null,
+                deviceCountry = "IN",
+                configLocale = "US",
+            ),
+        )
     }
 
     @Test fun country_configLocaleWhenNoOverrideOrDevice() {
-        assertEquals("DE", CurrencyResolver.resolveCountry(override = null, deviceCountry = null, configLocale = "DE"))
+        assertEquals(
+            "DE",
+            CurrencyResolver.resolveCountry(
+                override = null,
+                storeStorefront = null,
+                deviceCountry = null,
+                configLocale = "DE",
+            ),
+        )
     }
 
     @Test fun country_defaultsToUS() {
-        assertEquals("US", CurrencyResolver.resolveCountry(override = "  ", deviceCountry = null, configLocale = null))
+        assertEquals(
+            "US",
+            CurrencyResolver.resolveCountry(
+                override = "  ",
+                storeStorefront = null,
+                deviceCountry = null,
+                configLocale = null,
+            ),
+        )
+    }
+
+    // ── store storefront (the true billing region) wins over the device UI locale ─────────
+
+    @Test fun country_storefrontWinsOverDevice() {
+        // The paywall-currency bug: India buyer (IN storefront) on an en-GB phone (GB device
+        // locale) must resolve to IN so pricing is ₹/INR, never GB/GBP.
+        assertEquals(
+            "IN",
+            CurrencyResolver.resolveCountry(
+                override = null,
+                storeStorefront = "IN",
+                deviceCountry = "GB",
+                configLocale = "US",
+            ),
+        )
+    }
+
+    @Test fun country_overrideWinsOverStorefront() {
+        assertEquals(
+            "US",
+            CurrencyResolver.resolveCountry(
+                override = "US",
+                storeStorefront = "IN",
+                deviceCountry = "GB",
+                configLocale = "DE",
+            ),
+        )
+    }
+
+    @Test fun country_storefrontNullFallsThroughToDevice() {
+        assertEquals(
+            "GB",
+            CurrencyResolver.resolveCountry(
+                override = null,
+                storeStorefront = "   ",
+                deviceCountry = "GB",
+                configLocale = "US",
+            ),
+        )
+    }
+
+    @Test fun country_allNullDefaultsToUS() {
+        assertEquals(
+            "US",
+            CurrencyResolver.resolveCountry(
+                override = null,
+                storeStorefront = null,
+                deviceCountry = null,
+                configLocale = null,
+            ),
+        )
     }
 
     // ── resolveCurrency: one currency for the whole paywall ──────────────────────────────
