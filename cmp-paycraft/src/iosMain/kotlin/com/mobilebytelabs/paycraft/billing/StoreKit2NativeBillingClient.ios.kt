@@ -54,6 +54,13 @@ class StoreKit2NativeBillingClient(private val bridge: StoreKit2Bridge) : Native
         UIApplication.sharedApplication.openURL(url)
     }
 
+    override suspend fun storefrontCountry(): String? = bridge.storefrontCountry()
+
+    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? =
+        bridge.displayPrice(productId)?.let {
+            NativeDisplayPrice(formatted = it.formatted, currencyCode = it.currencyCode, amountMicros = it.amountMicros)
+        }
+
     private fun StoreKit2Transaction.toNativePurchase(): NativePurchase = NativePurchase(
         productId = productId,
         purchaseToken = jwsRepresentation,

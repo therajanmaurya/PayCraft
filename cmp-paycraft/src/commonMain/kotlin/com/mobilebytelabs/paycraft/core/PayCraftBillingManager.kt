@@ -2,6 +2,7 @@ package com.mobilebytelabs.paycraft.core
 
 import com.mobilebytelabs.paycraft.PayCraft
 import com.mobilebytelabs.paycraft.billing.NativeBillingClient
+import com.mobilebytelabs.paycraft.billing.NativePurchase
 import com.mobilebytelabs.paycraft.billing.NativePurchaseResult
 import com.mobilebytelabs.paycraft.debug.PayCraftLogger
 import com.mobilebytelabs.paycraft.model.BillingPlan
@@ -11,6 +12,7 @@ import com.mobilebytelabs.paycraft.model.SubscriptionStatus
 import com.mobilebytelabs.paycraft.model.TrialInfo
 import com.mobilebytelabs.paycraft.model.VerificationMethod
 import com.mobilebytelabs.paycraft.model.toSubscriptionStatus
+import com.mobilebytelabs.paycraft.network.EntitlementDto
 import com.mobilebytelabs.paycraft.network.OtpGateResult
 import com.mobilebytelabs.paycraft.network.PayCraftService
 import com.mobilebytelabs.paycraft.persistence.PayCraftStore
@@ -142,32 +144,85 @@ class PayCraftBillingManager(
 
     override fun logIn(email: String) = registerAndLogin(email)
 
-    // ─── Google Play Billing lane (Payments-policy compliance) ─────────────────
+    // ─── Native in-app-purchase lanes (Payments-policy / Guideline-3.1.1 compliance) ─────────────
 
     /** Canonical states that mean the entitlement is currently premium (grace = active, D6). */
     private val premiumCanonicalStates = setOf("trial", "active", "active_non_renewing", "in_grace_period")
 
-    override fun purchaseViaPlayBilling(plan: BillingPlan, email: String?) {
+    override fun purchaseViaPlayBilling(plan: BillingPlan, email: String?) = purchaseNative(
+        tag = "purchaseViaPlayBilling",
+        plan = plan,
+        email = email,
+        productId = plan.playProductId,
+        storeLabel = "Play",
+        notWiredError = "Google Play billing is not available on this device",
+        misconfiguredError = "Google Play product not configured",
+        // Google Play has a client-facing grant endpoint: register the purchaseToken server-side and
+        // reflect the reconciled entitlement immediately.
+        register = { purchase, resolvedProductId, appUserId ->
+            service.registerPlayPurchase(
+                purchaseToken = purchase.purchaseToken,
+                productId = resolvedProductId,
+                appUserId = appUserId,
+                packageName = purchase.packageName.orEmpty(),
+            )
+        },
+    )
+
+    override fun purchaseViaStoreKit(plan: BillingPlan, email: String?) = purchaseNative(
+        tag = "purchaseViaStoreKit",
+        plan = plan,
+        email = email,
+        productId = plan.appStoreProductId,
+        storeLabel = "StoreKit",
+        notWiredError = "App Store billing is not available on this device",
+        misconfiguredError = "App Store product not configured",
+        // No client-facing StoreKit grant endpoint today: entitlement truth lands server-side via the
+        // Apple App Store Server Notifications (ASSN-V2) webhook, so we skip the immediate register
+        // call and reconcile through the normal server path below. (Follow-up: a client-facing
+        // register-appstore endpoint mirroring register-play-purchase would enable instant unlock.)
+        register = null,
+    )
+
+    /**
+     * Shared native-purchase driver for both store lanes (Play Billing / StoreKit). Enforces the
+     * SAME fail-closed anti-steering contract on both: a missing product id or an unwired native
+     * client sets [BillingState.Error] and NEVER opens the web page.
+     *
+     * @param register optional server grant step (Play has one, StoreKit does not). When non-null and
+     *   it returns a premium entitlement, premium is reflected immediately; when non-null and it
+     *   returns null, the purchase is surfaced as "could not be verified". When null (StoreKit), the
+     *   purchase reconciles purely through the server refresh path (ASSN-V2 already delivered truth).
+     */
+    private fun purchaseNative(
+        tag: String,
+        plan: BillingPlan,
+        email: String?,
+        productId: String?,
+        storeLabel: String,
+        notWiredError: String,
+        misconfiguredError: String,
+        register: (suspend (purchase: NativePurchase, productId: String, appUserId: String) -> EntitlementDto?)?,
+    ) {
         val native = nativeBillingClient
         if (native == null) {
-            // No native client wired (e.g. paycraftPlayBillingModule not loaded). Fail CLOSED with an
-            // error — we do NOT fall back to the web page (that is the violation we prevent).
+            // No native client wired (e.g. the platform billing module not loaded). Fail CLOSED with
+            // an error — we do NOT fall back to the web page (that is the violation we prevent).
             PayCraftLogger.onError(
-                "purchaseViaPlayBilling",
-                "no NativeBillingClient wired for ${plan.id} — load paycraftPlayBillingModule on Android",
+                tag,
+                "no NativeBillingClient wired for ${plan.id} — load the platform billing module",
             )
-            _billingState.value = BillingState.Error("Google Play billing is not available on this device")
+            _billingState.value = BillingState.Error(notWiredError)
             return
         }
 
-        val productId = plan.playProductId
         if (productId.isNullOrBlank()) {
-            // ANTI-STEERING KEYSTONE: a misconfigured product must NOT open the browser on Android.
+            // ANTI-STEERING KEYSTONE: a misconfigured product must NOT open the browser on a native store.
             PayCraftLogger.onError(
-                "purchaseViaPlayBilling",
-                "playProductId missing for ${plan.id} — refusing web fallback (Payments-policy anti-steering)",
+                tag,
+                "product id missing for ${plan.id} — refusing web fallback (store anti-steering)",
             )
-            _billingState.value = BillingState.Error("Google Play product not configured")
+            _billingState.value = BillingState.Error(misconfiguredError)
             return
         }
 
@@ -181,19 +236,16 @@ class PayCraftBillingManager(
             when (val result = native.purchase(productId)) {
                 is NativePurchaseResult.Success -> {
                     val purchase = result.purchase
-                    PayCraftLogger.onFlow(
-                        "purchaseViaPlayBilling",
-                        "Play purchase OK (product=$productId) → registering with server",
-                    )
-                    val entitlement = try {
-                        service.registerPlayPurchase(
-                            purchaseToken = purchase.purchaseToken,
-                            productId = productId,
-                            appUserId = appUserId,
-                            packageName = purchase.packageName.orEmpty(),
-                        )
-                    } catch (e: Exception) {
-                        PayCraftLogger.onError("purchaseViaPlayBilling", "registerPlayPurchase failed: ${e.message}")
+                    PayCraftLogger.onFlow(tag, "$storeLabel purchase OK (product=$productId)")
+
+                    val entitlement = if (register != null) {
+                        try {
+                            register(purchase, productId, appUserId)
+                        } catch (e: Exception) {
+                            PayCraftLogger.onError(tag, "server register failed: ${e.message}")
+                            null
+                        }
+                    } else {
                         null
                     }
 
@@ -204,7 +256,7 @@ class PayCraftBillingManager(
                     if (nowPremium) {
                         val status = SubscriptionStatus(
                             isPremium = true,
-                            plan = entitlement!!.productId,
+                            plan = entitlement.productId,
                             email = _userEmail.value,
                             provider = entitlement.provider,
                             expiresAt = entitlement.expiresAt?.let { millisToIso(it) },
@@ -218,19 +270,36 @@ class PayCraftBillingManager(
                             _subscriptionActivated.emit(SubscriptionActivated(sku = status.plan, isTrial = false))
                         }
                         lastObservedPremium = true
-                    } else if (entitlement == null) {
+                    } else if (register != null && entitlement == null) {
+                        // A grant endpoint EXISTS but did not confirm — surface the failure.
                         _billingState.value = BillingState.Error(
                             "Purchase completed but could not be verified. Contact support if premium doesn't unlock.",
                         )
                     }
 
-                    // Then reconcile through the normal server path so the entitlement fully lands
-                    // (task 3). refreshStatus(force=true) re-checks server truth for the device.
-                    refreshStatus(force = true)
+                    // Then reconcile through the normal server path so the entitlement fully lands.
+                    if (_billingState.value is BillingState.Loading) {
+                        // register == null (StoreKit): nothing set Premium/Error, so state is still
+                        // Loading. refreshStatus() would skip on its Loading guard — reconcile directly
+                        // instead so ASSN-V2-delivered truth is picked up.
+                        val reconcileEmail = _userEmail.value
+                        if (reconcileEmail != null) {
+                            checkPremiumWithDeviceToken(reconcileEmail)
+                        } else {
+                            _billingState.value = if (_isPremium.value) {
+                                BillingState.Premium(_subscriptionStatus.value)
+                            } else {
+                                BillingState.Free
+                            }
+                        }
+                    } else {
+                        // state is Premium/Error → refreshStatus re-checks server truth for the device.
+                        refreshStatus(force = true)
+                    }
                 }
 
                 NativePurchaseResult.Cancelled -> {
-                    PayCraftLogger.onFlow("purchaseViaPlayBilling", "Play purchase cancelled by user")
+                    PayCraftLogger.onFlow(tag, "$storeLabel purchase cancelled by user")
                     // Return to the pre-purchase resting state rather than an error.
                     _billingState.value = if (_isPremium.value) {
                         BillingState.Premium(_subscriptionStatus.value)
@@ -240,7 +309,7 @@ class PayCraftBillingManager(
                 }
 
                 is NativePurchaseResult.Failed -> {
-                    PayCraftLogger.onError("purchaseViaPlayBilling", "Play purchase failed: ${result.message}")
+                    PayCraftLogger.onError(tag, "$storeLabel purchase failed: ${result.message}")
                     _billingState.value = BillingState.Error(result.message)
                 }
             }

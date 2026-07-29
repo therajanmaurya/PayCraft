@@ -23,6 +23,22 @@ data class NativePurchase(
     val packageName: String? = null,
 )
 
+/**
+ * The store's OWN localized price for a product, as reported by Google Play
+ * (`ProductDetails` → `formattedPrice` / `priceCurrencyCode` / `priceAmountMicros`) or StoreKit2
+ * (`Product.displayPrice` / currency / `price`). This is the truth the shopper is actually charged
+ * in the native billing lane — it already reflects the store storefront (the region where the
+ * user's Play/Apple payment account lives), not the device UI locale or the cloud `/config` price.
+ *
+ * Device-free value object so `commonMain` pricing code can prefer the native price over the
+ * cloud-resolved one for native lanes (Android Play Billing / iOS StoreKit2).
+ *
+ * @param formatted     Store-formatted, localized price string (e.g. "₹799.00", "$9.99").
+ * @param currencyCode  ISO 4217 currency of the store price (e.g. "INR", "USD").
+ * @param amountMicros  Price in micro-units of the currency (1_000_000 micros = 1 unit).
+ */
+data class NativeDisplayPrice(val formatted: String, val currencyCode: String, val amountMicros: Long)
+
 /** Outcome of a native purchase attempt. */
 sealed interface NativePurchaseResult {
     data class Success(val purchase: NativePurchase) : NativePurchaseResult
@@ -74,6 +90,23 @@ interface NativeBillingClient {
      * the store supports it; null opens the account subscription list.
      */
     suspend fun manageSubscription(productId: String?)
+
+    /**
+     * The store's billing storefront country (ISO 3166-1 alpha-2) — Play
+     * `getBillingConfig().countryCode` / StoreKit `Storefront.current?.countryCode`. This is the
+     * region the user's Play/Apple PAYMENT ACCOUNT lives in, which is the true billing region for
+     * native lanes and takes precedence over the device UI locale (an Indian buyer on an en-GB
+     * phone should see IN pricing, not GB). Null when the store cannot report it.
+     */
+    suspend fun storefrontCountry(): String?
+
+    /**
+     * The store's OWN localized price for [productId] — Play `ProductDetails.formattedPrice` /
+     * StoreKit `Product.displayPrice`. Preferred over the cloud `/config` price for native lanes
+     * so the paywall shows exactly what the store will charge (e.g. ₹799 from the IN storefront).
+     * Null when the product/price is unavailable on this store.
+     */
+    suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice?
 }
 
 /**
@@ -101,4 +134,11 @@ class WebCheckoutNativeBillingClient : NativeBillingClient {
 
     // intentional-noop: no native subscription centre on this platform; PSP cancel is used.
     override suspend fun manageSubscription(productId: String?) = Unit
+
+    // intentional-noop: no native store → no store storefront; country falls through to the
+    // device region / cloud locale in CurrencyResolver.
+    override suspend fun storefrontCountry(): String? = null
+
+    // intentional-noop: no native store → no store-localized price; the cloud /config price is used.
+    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
 }

@@ -1,6 +1,7 @@
 package com.mobilebytelabs.paycraft.core
 
 import com.mobilebytelabs.paycraft.billing.NativeBillingClient
+import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
 import com.mobilebytelabs.paycraft.billing.NativePurchase
 import com.mobilebytelabs.paycraft.billing.NativePurchaseResult
 import com.mobilebytelabs.paycraft.model.BillingPlan
@@ -180,15 +181,21 @@ class PayCraftBillingManagerTest {
         override suspend fun sync() = Unit
         override suspend fun restore(): List<NativePurchase> = emptyList()
         override suspend fun manageSubscription(productId: String?) = Unit
+        override suspend fun storefrontCountry(): String? = null
+        override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
     }
 
-    private fun digitalPlan(playProductId: String?) = BillingPlan(
+    private fun digitalPlan(
+        playProductId: String? = "paycraft_monthly",
+        appStoreProductId: String? = "com.paycraft.monthly",
+    ) = BillingPlan(
         id = "monthly",
         name = "Monthly",
         price = "$9.99",
         interval = "month",
         rank = 0,
         playProductId = playProductId,
+        appStoreProductId = appStoreProductId,
         isDigital = true,
     )
 
@@ -238,6 +245,56 @@ class PayCraftBillingManagerTest {
         )
 
         manager.purchaseViaPlayBilling(digitalPlan(playProductId = "paycraft_monthly"), email = null)
+
+        assertIs<BillingState.Error>(manager.billingState.value)
+    }
+
+    // ─── Apple StoreKit anti-steering guard (Guideline 3.1.1 keystone) ─────────
+
+    @Test
+    fun purchaseViaStoreKit_missingAppStoreProductId_setsErrorAndNeverLaunchesPurchase() {
+        val native = FakeNativeBillingClient()
+        val manager = PayCraftBillingManager(
+            service = FakePayCraftService(),
+            store = FakePayCraftStore(cached = null, lastSynced = 0L, email = null),
+            nativeBillingClient = native,
+        )
+
+        // A digital product with NO app_store_product_id must be BLOCKED — not routed to the store,
+        // and (by the caller contract) not to the browser either (Apple 3.1.1 anti-steering).
+        manager.purchaseViaStoreKit(digitalPlan(appStoreProductId = null), email = "user@example.com")
+
+        val state = assertIs<BillingState.Error>(manager.billingState.value)
+        assertEquals("App Store product not configured", state.message)
+        assertFalse(native.purchaseCalled, "must not launch the store flow for a misconfigured product")
+    }
+
+    @Test
+    fun purchaseViaStoreKit_blankAppStoreProductId_isBlocked() {
+        val native = FakeNativeBillingClient()
+        val manager = PayCraftBillingManager(
+            service = FakePayCraftService(),
+            store = FakePayCraftStore(cached = null, lastSynced = 0L, email = null),
+            nativeBillingClient = native,
+        )
+
+        manager.purchaseViaStoreKit(digitalPlan(appStoreProductId = "   "), email = null)
+
+        assertIs<BillingState.Error>(manager.billingState.value)
+        assertFalse(native.purchaseCalled)
+    }
+
+    @Test
+    fun purchaseViaStoreKit_noNativeClientWired_failsClosedWithError() {
+        // No NativeBillingClient (StoreKit module not loaded) → fail closed with an error,
+        // NEVER a silent web fallback.
+        val manager = PayCraftBillingManager(
+            service = FakePayCraftService(),
+            store = FakePayCraftStore(cached = null, lastSynced = 0L, email = null),
+            nativeBillingClient = null,
+        )
+
+        manager.purchaseViaStoreKit(digitalPlan(appStoreProductId = "com.paycraft.monthly"), email = null)
 
         assertIs<BillingState.Error>(manager.billingState.value)
     }

@@ -7,7 +7,9 @@
 //  `AppStore`) is called; it conforms to the Kotlin `StoreKit2Bridge` protocol (exported into the
 //  shared KMP framework header) and is injected from the iOS app via
 //  `paycraftStoreKit2BillingModule(bridge:)`. `StoreKit2NativeBillingClient` (Kotlin) consumes only
-//  the protocol, keeping the reconciliation/restore code device-free and unit-testable.
+//  the protocol, keeping the reconciliation/restore code device-free and unit-testable. It is also
+//  the one place `Storefront.current` (billing region) and `Product.displayPrice` (store-localized
+//  price) are read for the paywall currency fix.
 //
 //  WIRING (consuming iOS app):
 //    1. Add this file to the app's Xcode target (it needs the app's StoreKit entitlement).
@@ -107,6 +109,43 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
             do {
                 try await AppStore.showManageSubscriptions(in: scene)
                 completionHandler(KotlinUnit(), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
+    // MARK: storefrontCountry() -> String?
+
+    public func storefrontCountry(completionHandler: @escaping (String?, Error?) -> Void) {
+        Task {
+            // `Storefront.current` is async — it resolves the storefront the signed-in Apple ID
+            // buys from (the true billing region), independent of the device UI locale.
+            let storefront = await Storefront.current
+            completionHandler(storefront?.countryCode, nil)
+        }
+    }
+
+    // MARK: displayPrice(productId:) -> StoreKit2Price?
+
+    public func displayPrice(productId: String, completionHandler: @escaping (StoreKit2Price?, Error?) -> Void) {
+        Task {
+            do {
+                let products = try await Product.products(for: [productId])
+                guard let product = products.first else {
+                    completionHandler(nil, nil)
+                    return
+                }
+                // `price` is a Decimal in the storefront currency; scale to integer micro-units.
+                let micros = NSDecimalNumber(decimal: product.price * Decimal(1_000_000)).int64Value
+                completionHandler(
+                    StoreKit2Price(
+                        formatted: product.displayPrice,
+                        currencyCode: product.priceFormatStyle.currencyCode,
+                        amountMicros: micros
+                    ),
+                    nil
+                )
             } catch {
                 completionHandler(nil, error)
             }

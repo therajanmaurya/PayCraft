@@ -75,6 +75,7 @@ class PayCraftRestoreContentTest {
         override fun logIn(email: String) = registerAndLogin(email)
 
         override fun purchaseViaPlayBilling(plan: BillingPlan, email: String?) { /* no-op in tests */ }
+        override fun purchaseViaStoreKit(plan: BillingPlan, email: String?) { /* no-op in tests */ }
 
         override suspend fun checkTrialEligibility(): Boolean = true
 
