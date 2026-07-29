@@ -115,10 +115,10 @@ object PayCraft {
      * per-plan currency (fixes an India buyer seeing GBP instead of the store's ₹799). Empty on
      * web-checkout platforms and until the async native-price fetch completes → cloud price is used.
      */
-    private var _nativePricesBySku: Map<String, NativeDisplayPrice> = emptyMap()
+    private var nativePricesBySku: Map<String, NativeDisplayPrice> = emptyMap()
 
     /** Last applied SuiteConfig — kept so a late native-price fetch can rebuild + re-emit plans. */
-    private var _currentSuite: SuiteConfig? = null
+    private var currentSuite: SuiteConfig? = null
 
     /**
      * THE single resolved billing region — the one (country, currency) the whole paywall uses:
@@ -330,12 +330,11 @@ object PayCraft {
      * Android, App Store `app_store_product_id` on iOS. Null on web-checkout platforms or when the
      * dashboard did not configure a native id (→ no native price, cloud price is used).
      */
-    private fun storeProductIdFor(product: ProductDto): String? =
-        when (PlatformInfo.platform.lowercase()) {
-            "android" -> product.playProductId
-            "ios" -> product.appStoreProductId
-            else -> null
-        }?.takeIf { it.isNotBlank() }
+    private fun storeProductIdFor(product: ProductDto): String? = when (PlatformInfo.platform.lowercase()) {
+        "android" -> product.playProductId
+        "ios" -> product.appStoreProductId
+        else -> null
+    }?.takeIf { it.isNotBlank() }
 
     /**
      * Ask the native store for each product's OWN localized price (Play `formattedPrice` /
@@ -355,7 +354,7 @@ object PayCraft {
             prices[product.sku] = native
         }
         if (prices.isNotEmpty()) {
-            _nativePricesBySku = prices
+            nativePricesBySku = prices
             // Re-apply the SAME suite: rebuilds config.plans with native prices and re-emits the
             // flow so the collecting paywall ViewModel recomposes with the store-localized price.
             applySuiteConfig(suite)
@@ -364,7 +363,7 @@ object PayCraft {
     }
 
     /** The native store's localized price for a plan sku, if resolved. See [displayPrice] wiring. */
-    internal fun nativePriceForSku(sku: String): NativeDisplayPrice? = _nativePricesBySku[sku]
+    internal fun nativePriceForSku(sku: String): NativeDisplayPrice? = nativePricesBySku[sku]
 
     /**
      * Empty PaymentProvider used as a placeholder when [config] is populated
@@ -388,8 +387,8 @@ object PayCraft {
         // value (null on cold start) and drop the plans — and it would never re-fire,
         // because the StateFlow value wouldn't change again. Config-first ordering
         // guarantees every collector observes the freshly-resolved config.
-        _currentSuite = suite
-        val resolved = suite.toPayCraftConfig(backend, apiKey, _nativePricesBySku)
+        currentSuite = suite
+        val resolved = suite.toPayCraftConfig(backend, apiKey, nativePricesBySku)
         this.config = resolved
         // The cloud resolved prices for the active locale; capture the single currency every
         // provider + the displayed price now share (uniform across products for a locale).
@@ -496,7 +495,8 @@ object PayCraft {
             // WITHOUT ever opening the browser — the anti-steering guarantee on both stores.
             is CheckoutLane.NativePlay,
             is CheckoutLane.NativeStoreKit,
-            is CheckoutLane.Misconfigured ->
+            is CheckoutLane.Misconfigured,
+            ->
                 routeNativeDigital(plan, email, lane)
         }
     }
@@ -519,7 +519,8 @@ object PayCraft {
             }
             is CheckoutLane.NativePlay,
             is CheckoutLane.NativeStoreKit,
-            is CheckoutLane.Misconfigured ->
+            is CheckoutLane.Misconfigured,
+            ->
                 routeNativeDigital(plan, email, lane)
         }
     }

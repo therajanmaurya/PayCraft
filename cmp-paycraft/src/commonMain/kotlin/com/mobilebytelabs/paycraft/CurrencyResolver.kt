@@ -48,12 +48,11 @@ object CurrencyResolver {
         storeStorefront: String?,
         deviceCountry: String?,
         configLocale: String?,
-    ): String =
-        override?.trim()?.takeIf { it.isNotBlank() }
-            ?: storeStorefront?.trim()?.takeIf { it.isNotBlank() }
-            ?: deviceCountry?.trim()?.takeIf { it.isNotBlank() }
-            ?: configLocale?.trim()?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_COUNTRY
+    ): String = override?.trim()?.takeIf { it.isNotBlank() }
+        ?: storeStorefront?.trim()?.takeIf { it.isNotBlank() }
+        ?: deviceCountry?.trim()?.takeIf { it.isNotBlank() }
+        ?: configLocale?.trim()?.takeIf { it.isNotBlank() }
+        ?: DEFAULT_COUNTRY
 
     /**
      * The one currency the whole paywall uses — the currency the cloud resolved for the active

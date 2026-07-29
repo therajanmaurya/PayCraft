@@ -9,6 +9,7 @@ import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClient.BillingResponseCode
 import com.android.billingclient.api.BillingClientStateListener
+import com.android.billingclient.api.BillingConfig
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
 import com.android.billingclient.api.GetBillingConfigParams
@@ -19,7 +20,6 @@ import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import com.android.billingclient.api.acknowledgePurchase
-import com.android.billingclient.api.getBillingConfig
 import com.android.billingclient.api.queryProductDetails
 import com.android.billingclient.api.queryPurchasesAsync
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -159,9 +159,21 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
     override suspend fun storefrontCountry(): String? {
         val connect = ensureConnected()
         if (connect.responseCode != BillingResponseCode.OK) return null
-        val result = billingClient.getBillingConfig(GetBillingConfigParams.newBuilder().build())
-        if (result.billingResult.responseCode != BillingResponseCode.OK) return null
-        return result.billingConfig?.countryCode?.takeIf { it.isNotBlank() }
+        // billing-ktx v8 exposes suspend wrappers for queryProductDetails / queryPurchasesAsync /
+        // acknowledgePurchase, but NOT for getBillingConfig — use the callback API wrapped in a
+        // coroutine (same pattern as ensureConnected below).
+        val config: BillingConfig? = suspendCancellableCoroutine { cont ->
+            billingClient.getBillingConfigAsync(
+                GetBillingConfigParams.newBuilder().build(),
+            ) { billingResult, billingConfig ->
+                if (cont.isActive) {
+                    cont.resume(
+                        if (billingResult.responseCode == BillingResponseCode.OK) billingConfig else null,
+                    )
+                }
+            }
+        }
+        return config?.countryCode?.takeIf { it.isNotBlank() }
     }
 
     /**

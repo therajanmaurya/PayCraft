@@ -1,8 +1,8 @@
 package com.mobilebytelabs.paycraft.model
 
 import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
-import com.mobilebytelabs.paycraft.config.ProductDto
 import com.mobilebytelabs.paycraft.config.PriceDto
+import com.mobilebytelabs.paycraft.config.ProductDto
 import com.mobilebytelabs.paycraft.config.SuiteConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
