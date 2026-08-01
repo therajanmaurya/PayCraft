@@ -43,6 +43,11 @@ const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!
 export interface CheckoutRouteRequest {
   tenantId: string
   product: ProductForRouting
+  // Caller platform (SDK PlatformInfo.platform): "ios" | "android" | "desktop" | "web".
+  // A routing rule matches when its platform equals this OR is the "any" wildcard, and
+  // platform-specific rules are preferred over "any" (see matchingRules below). This is
+  // orthogonal to the store-compliance lane — it only picks WHICH commercial provider.
+  platform?: string | null
   customer?: {
     country?: string | null  // ISO 3166-1 alpha-2
     currency?: string | null // ISO 4217
@@ -100,8 +105,22 @@ interface RoutingRuleRow {
   country_code: string | null
   currency: string | null
   product_type: string | null
+  platform: string | null   // "ios" | "android" | "desktop" | "web" | "any"
   priority_methods: string[]
   priority: number
+}
+
+/**
+ * A routing rule applies to a caller platform when the rule targets that exact platform or is the
+ * "any"/null wildcard. A platform-specific rule never fires on a different platform — a
+ * "desktop → Stripe" rule is skipped on iOS. Exported for unit testing (migration 075 / AC7).
+ */
+export function platformMatches(
+  rulePlatform: string | null | undefined,
+  requestPlatform: string | null,
+): boolean {
+  const rp = rulePlatform ?? "any"
+  return rp === "any" || rp === requestPlatform
 }
 
 interface ProviderRow {
@@ -145,7 +164,7 @@ export async function routeCheckout(
       .eq("tenant_id", req.tenantId),
     admin
       .from("tenant_routing_rules")
-      .select("country_code, currency, product_type, priority_methods, priority")
+      .select("country_code, currency, product_type, platform, priority_methods, priority")
       .eq("tenant_id", req.tenantId)
       .order("priority", { ascending: true }),
     admin
@@ -165,10 +184,14 @@ export async function routeCheckout(
   )
 
   // 1. Try every matching routing rule in priority order.
+  const requestPlatform = (req.platform ?? "").toString().toLowerCase() || null
   const matchingRules = (ruleRows ?? []).filter((rule: RoutingRuleRow) => {
     if (rule.country_code && rule.country_code !== customerCountry) return false
     if (rule.currency && rule.currency !== customerCurrency) return false
     if (rule.product_type && rule.product_type !== req.product.type) return false
+    // Platform match (migration 075): a rule applies when it targets this caller's platform or is
+    // the "any" wildcard. A "desktop → Stripe" rule never fires on iOS. See platformMatches.
+    if (!platformMatches(rule.platform, requestPlatform)) return false
     return true
   })
 

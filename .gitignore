@@ -109,7 +109,12 @@ cli/dist/
 # Local supabase CLI artifacts (supabase/.gitignore covers .temp + .branches;
 # this catches the convenience symlink supabase/migrations → ../server/migrations
 # that local devs may add so `supabase db reset` finds the migrations).
-supabase/migrations
+# NOTE: migrations that must be versioned + deployed are re-included below via `!`
+# negation (a blanket ignore here silently dropped schema changes on deploy — see
+# migration 075 / paycraft-provider-platform-onboarding epic). Track new schema by
+# adding a matching `!supabase/migrations/NNN_*.sql` line.
+supabase/migrations/*
+!supabase/migrations/075_routing_platform_dimension.sql
 .vercel
 
 # Wrangler CLI cache (Cloudflare Workers)

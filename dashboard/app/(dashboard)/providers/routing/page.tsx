@@ -61,9 +61,11 @@ export default async function RoutingRulesPage() {
         <h1 className="text-2xl font-bold text-ink-900">Smart routing</h1>
         <p className="text-sm text-ink-500 mt-1 max-w-3xl">
           Override the default "cheapest eligible method" picker with
-          per-(country, currency, product type) priority rules. Each rule is
-          tried in priority order; first match wins. Leave a field blank to
-          match everything.
+          per-(country, currency, product type, platform) priority rules — set a
+          rule's <strong>platform</strong> to steer providers per app platform
+          (e.g. Stripe on desktop, Razorpay on Android), or leave it "Any". Each
+          rule is tried in priority order; first match wins. Leave a field blank
+          to match everything.
         </p>
       </div>
 
