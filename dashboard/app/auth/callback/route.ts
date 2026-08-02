@@ -46,10 +46,15 @@ export async function GET(request: NextRequest) {
   // (the previous default — /subscribers).
   const { data: { user } } = await supabase.auth.getUser()
   if (user) {
+    // Does the user admin AT LEAST ONE tenant? `.limit(1).maybeSingle()` returns the first
+    // membership (or null) and — unlike a bare `.maybeSingle()` — does NOT error when the user
+    // owns multiple tenants. The bare form threw for any ≥2-tenant owner, making `existing` null
+    // and wrongly bouncing returning multi-tenant admins to /onboarding on every login.
     const { data: existing } = await supabase
       .from("tenant_admins")
       .select("tenant_id")
       .eq("user_id", user.id)
+      .limit(1)
       .maybeSingle()
 
     if (!existing) {
