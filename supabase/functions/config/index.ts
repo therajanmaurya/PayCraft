@@ -17,6 +17,60 @@ import {
   requireRateLimit,
 } from "../_shared/rate-limit.ts"
 
+/** Map a routing method name (stripe_card, razorpay_upi, direct_upi…) to its provider. */
+function methodToProvider(method: string): string {
+  if (method.startsWith("stripe")) return "stripe"
+  if (method.startsWith("razorpay")) return "razorpay"
+  if (method.startsWith("direct_upi") || method.startsWith("upi")) return "direct_upi"
+  if (method.startsWith("cashfree")) return "cashfree"
+  return method
+}
+
+/**
+ * Order [providers] by the tenant's PLATFORM routing preference (migration 075) so the SDK's
+ * first provider is the tenant's intended primary for THIS caller platform (e.g. Stripe on
+ * desktop, Razorpay on Android) instead of an arbitrary DB order. Uses the highest-priority
+ * routing rule whose platform matches [platform] or is the "any" wildcard; providers named
+ * earliest in that rule's priority_methods come first, unmentioned providers keep their relative
+ * order at the end. Each returned provider is tagged with the resolved [platform]. Non-fatal:
+ * returns the input order (still platform-tagged) on any error or when no rule matches.
+ */
+async function orderProvidersByPlatform(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  tenantId: string,
+  platform: string | null,
+  // deno-lint-ignore no-explicit-any
+  providers: any[],
+  // deno-lint-ignore no-explicit-any
+): Promise<any[]> {
+  const tagged = providers.map((p) => ({ ...p, platform }))
+  try {
+    const { data: rules } = await supabase
+      .from("tenant_routing_rules")
+      .select("platform, priority_methods, priority")
+      .eq("tenant_id", tenantId)
+      .order("priority", { ascending: true })
+    // deno-lint-ignore no-explicit-any
+    const match = (rules ?? []).find((r: any) => {
+      const rp = r.platform ?? "any"
+      return rp === "any" || rp === platform
+    })
+    if (!match || !Array.isArray(match.priority_methods)) return tagged
+    const rank = new Map<string, number>()
+    match.priority_methods.forEach((m: string, i: number) => {
+      const prov = methodToProvider(m)
+      if (!rank.has(prov)) rank.set(prov, i)
+    })
+    if (rank.size === 0) return tagged
+    return [...tagged].sort(
+      (a, b) => (rank.get(a.provider) ?? 999) - (rank.get(b.provider) ?? 999),
+    )
+  } catch (_e) {
+    return tagged
+  }
+}
+
 export async function handleConfigRequest(req: Request): Promise<Response> {
   if (req.method !== "GET") {
     return new Response("Method not allowed", { status: 405 })
@@ -31,10 +85,27 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     })
   }
 
-  // Locale extraction from Accept-Language header (default US)
+  // Locale extraction from Accept-Language header (default US). The SDK already sends its
+  // storefront-first resolved country here, so this stays authoritative for per-locale pricing.
   const acceptLanguage = req.headers.get("accept-language") ?? "en-US"
   const localeCountry =
     (acceptLanguage.split(",")[0].split("-")[1] ?? "US").toUpperCase()
+
+  // Unified server IP-geo: the hosting edge (Vercel / Cloudflare / CloudFront) attaches the buyer's
+  // country as a request header. Return it as `geo_country` so the SDK's CountryDetector can fold
+  // it below the store storefront and above the device locale — one consistent signal on every
+  // platform, including web/desktop where no store storefront exists. Null when the edge did not
+  // attach a header (local dev / unknown host); the SDK degrades to device/locale in that case.
+  const geoCountry =
+    (req.headers.get("x-vercel-ip-country") ??
+      req.headers.get("cf-ipcountry") ??
+      req.headers.get("cloudfront-viewer-country"))?.trim()?.toUpperCase() || null
+  const geoSource = geoCountry ? "SERVER_IP_GEO" : "ABSENT"
+
+  // Caller platform (SDK sends X-PayCraft-Platform: ios|android|desktop|web). Drives per-platform
+  // provider ordering below (migration 075). Null when absent → "any" routing rules still apply.
+  const callerPlatform =
+    (req.headers.get("x-paycraft-platform") ?? "").trim().toLowerCase() || null
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -186,6 +257,17 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     },
   )
 
+  // 5b. Platform-filtered ordered providers (migration 075): order the enabled providers by the
+  //     tenant's routing preference for this caller platform so the SDK's primary provider is the
+  //     intended one per platform (Stripe on desktop, Razorpay on Android, …), not an arbitrary
+  //     DB order. Non-fatal — falls back to the enabled order when no rule matches.
+  const orderedProviders = await orderProvidersByPlatform(
+    supabase,
+    tenantId,
+    callerPlatform,
+    enabledProviders,
+  )
+
   // 6. Tier-derived branding override:
   //    Free tier always shows attribution regardless of paywall config.
   const tierEntitlements: string[] =
@@ -204,7 +286,7 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     tenant_id: tenantId,
     plan: tenantRes.data?.plan,
     products: pricedProducts,
-    providers: enabledProviders,
+    providers: orderedProviders,
     paywall: paywallRes.data
       ? { ...paywallRes.data, branding: brandingFinal }
       : {
@@ -222,6 +304,8 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
           success_cta_label: "Continue to app",
         },
     locale: localeCountry,
+    geo_country: geoCountry,
+    geo_source: geoSource,
     cache_ttl_seconds: 3600,
   }
 

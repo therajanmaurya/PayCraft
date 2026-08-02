@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
   const country_code = (body?.country_code ?? "").toString().trim() || null
   const currency = (body?.currency ?? "").toString().trim() || null
   const product_type = (body?.product_type ?? "").toString().trim() || null
+  const platform = ((body?.platform ?? "any").toString().trim().toLowerCase()) || "any"
   const priority_methods = Array.isArray(body?.priority_methods)
     ? body.priority_methods.filter((m: any) => typeof m === "string")
     : []
@@ -63,6 +64,12 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
+  if (!["ios", "android", "desktop", "web", "any"].includes(platform)) {
+    return NextResponse.json(
+      { error: "platform must be ios / android / desktop / web / any" },
+      { status: 400 },
+    )
+  }
 
   const { data: id, error } = await supabase.rpc("tenant_routing_rules_upsert", {
     p_tenant_id: tenant.id,
@@ -71,6 +78,7 @@ export async function POST(req: NextRequest) {
     p_product_type: product_type ?? null,
     p_priority_methods: priority_methods,
     p_priority: priority,
+    p_platform: platform,
   })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -80,7 +88,7 @@ export async function POST(req: NextRequest) {
     p_actor_type: "user",
     p_action: "routing_rule.created",
     p_resource: `tenant_routing_rules:id=${id}`,
-    p_after: { country_code, currency, product_type, priority_methods, priority },
+    p_after: { country_code, currency, product_type, platform, priority_methods, priority },
   })
 
   return NextResponse.json({ id, ok: true })

@@ -1,6 +1,7 @@
 package com.mobilebytelabs.paycraft.testsupport
 
 import com.mobilebytelabs.paycraft.billing.NativeBillingClient
+import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
 import com.mobilebytelabs.paycraft.billing.NativePurchase
 import com.mobilebytelabs.paycraft.billing.NativePurchaseResult
 import com.mobilebytelabs.paycraft.model.Entitlement
@@ -99,6 +100,9 @@ class SpyNativeBillingClient : NativeBillingClient {
         manageCalls++
         manageProductIds += productId
     }
+
+    override suspend fun storefrontCountry(): String? = null
+    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
 }
 
 /** Build a wire [EntitlementDto] (epoch-millis timestamps) for tests. */

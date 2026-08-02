@@ -137,7 +137,7 @@ export async function POST(
   // a subscription. "ok" = the product id landed on the row.
   const googlePlayReport: Report = { status: "skipped" }
   try {
-    await googlePlaySyncProduct(supabase, {
+    const res = await googlePlaySyncProduct(supabase, {
       tenantId: tenant.id,
       productId: params.id,
       body,
@@ -153,10 +153,13 @@ export async function POST(
       googlePlayReport.message = "native store sync only applies to subscription products"
     } else if (after?.play_product_id) {
       googlePlayReport.status = "ok"
+      // Synced, but the base plan may still be DRAFT until the app is published.
+      if (res.warning) googlePlayReport.message = res.warning
     } else {
       googlePlayReport.status = "failed"
       googlePlayReport.message =
-        "sync helper returned without populating play_product_id — check that google_play credentials + package_name are configured (server logs carry the Play API error)"
+        res.error ??
+        "sync helper returned without populating play_product_id — check that google_play credentials + package_name are configured"
     }
   } catch (e: any) {
     googlePlayReport.status = "failed"
@@ -165,7 +168,7 @@ export async function POST(
 
   const appStoreReport: Report = { status: "skipped" }
   try {
-    await appStoreSyncProduct(supabase, {
+    const res = await appStoreSyncProduct(supabase, {
       tenantId: tenant.id,
       productId: params.id,
       body,
@@ -184,7 +187,8 @@ export async function POST(
     } else {
       appStoreReport.status = "failed"
       appStoreReport.message =
-        "sync helper returned without populating app_store_product_id — check that app_store credentials (key_id/issuer_id/bundle_id + .p8) are configured (server logs carry the ASC API error)"
+        res.error ??
+        "sync helper returned without populating app_store_product_id — check that app_store credentials (key_id/issuer_id/bundle_id + .p8) are configured"
     }
   } catch (e: any) {
     appStoreReport.status = "failed"

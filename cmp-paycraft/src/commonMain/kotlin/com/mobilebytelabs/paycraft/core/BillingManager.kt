@@ -68,6 +68,26 @@ interface BillingManager {
      */
     fun purchaseViaPlayBilling(plan: com.mobilebytelabs.paycraft.model.BillingPlan, email: String?)
 
+    /**
+     * Apple StoreKit in-app-purchase lane (Apple Guideline 3.1.1 compliance).
+     *
+     * Called for an **iOS/macOS digital** checkout instead of opening a web payment page — a web
+     * checkout for a digital subscription on iOS is a 3.1.1 rejection. Drives [billingState]:
+     * Loading → then Premium / Free (user cancelled) / Error (failure OR a missing
+     * `app_store_product_id` — which is BLOCKED, never a browser fallback). No-op-with-error on
+     * platforms/builds where no native billing client is wired.
+     *
+     * Unlike [purchaseViaPlayBilling] there is no client-facing StoreKit grant endpoint today:
+     * entitlement truth lands server-side via the Apple App Store Server Notifications (ASSN-V2)
+     * webhook, so on success this reconciles through the normal server refresh path rather than an
+     * immediate client-side register call.
+     *
+     * @param plan the plan to purchase; its [com.mobilebytelabs.paycraft.model.BillingPlan.appStoreProductId]
+     *   is the App Store product id. Blank/null → [BillingState.Error], never a web fallback (anti-steering).
+     * @param email the buyer email (already logged-in by the paywall), used as the stable app-user-id.
+     */
+    fun purchaseViaStoreKit(plan: com.mobilebytelabs.paycraft.model.BillingPlan, email: String?)
+
     /** Registers this device with the server and checks premium status. Replaces logIn(). */
     fun registerAndLogin(email: String)
 

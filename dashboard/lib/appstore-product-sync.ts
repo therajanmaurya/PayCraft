@@ -268,7 +268,10 @@ export async function syncProductToAppStore(
           groupLevel: 1,
         },
         relationships: {
-          subscriptionGroup: {
+          // ASC keys this relationship `group` (linking a `subscriptionGroups`
+          // resource) — NOT `subscriptionGroup`. The wrong key produced a 409
+          // ENTITY_ERROR.RELATIONSHIP.UNKNOWN + a missing-required `group` error.
+          group: {
             data: { type: "subscriptionGroups", id: groupId },
           },
         },

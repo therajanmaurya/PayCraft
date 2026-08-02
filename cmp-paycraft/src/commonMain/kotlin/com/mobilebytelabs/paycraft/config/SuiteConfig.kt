@@ -17,6 +17,16 @@ data class SuiteConfig(
     val providers: List<ProviderDto> = emptyList(),
     val paywall: PaywallDto = PaywallDto(),
     val locale: String = "US",
+    /**
+     * The buyer country the PayCraft cloud resolved from the request's edge IP-country header
+     * (`x-vercel-ip-country` / `cf-ipcountry` / `cloudfront-viewer-country`). ISO 3166-1 alpha-2,
+     * or null when the hosting edge did not attach the header. Folded into the client's unified
+     * [com.mobilebytelabs.paycraft.CountryDetector] resolution below the store storefront and above
+     * the device locale — one consistent country signal on every platform.
+     */
+    @SerialName("geo_country") val geoCountry: String? = null,
+    /** Provenance of [geoCountry]: `"SERVER_IP_GEO"` when resolved, `"ABSENT"` when no header. */
+    @SerialName("geo_source") val geoSource: String? = null,
     @SerialName("cache_ttl_seconds") val cacheTtlSeconds: Int = 3600,
     // Set by the client on receipt; not returned by the server.
     @SerialName("fetched_at_epoch_millis") val fetchedAtEpochMillis: Long = 0L,
@@ -106,6 +116,13 @@ data class ProviderDto(
     @SerialName("live_payment_links")
     val livePaymentLinksBySku: Map<String, Map<String, String>> = emptyMap(),
     @SerialName("supported_locales") val supportedLocales: List<String>? = null,
+    /**
+     * The caller platform this provider was ordered for (`ios`/`android`/`desktop`/`web`), echoed
+     * by `/config` from the `X-PayCraft-Platform` request header (migration 075). Informational —
+     * the meaningful signal is the ORDER of [SuiteConfig.providers], which the SDK trusts as the
+     * tenant's per-platform preference. Null when the server did not tag it.
+     */
+    @SerialName("platform") val platform: String? = null,
 )
 
 /**

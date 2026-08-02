@@ -1,6 +1,8 @@
 package com.mobilebytelabs.paycraft
 
 import com.mobilebytelabs.paycraft.billing.CheckoutLane
+import com.mobilebytelabs.paycraft.billing.NativeBillingClient
+import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
 import com.mobilebytelabs.paycraft.billing.resolveCheckoutLane
 import com.mobilebytelabs.paycraft.config.CouponDto
 import com.mobilebytelabs.paycraft.config.ProductDto
@@ -107,6 +109,18 @@ object PayCraft {
     private var _activeCurrency: String = CurrencyResolver.FALLBACK_CURRENCY
 
     /**
+     * The native store's OWN localized price per plan sku (Play `formattedPrice` / StoreKit
+     * `displayPrice`), resolved after products load on native billing lanes. When present it is
+     * the truth the store charges and OVERRIDES the cloud `/config` price for the paywall + the
+     * per-plan currency (fixes an India buyer seeing GBP instead of the store's ₹799). Empty on
+     * web-checkout platforms and until the async native-price fetch completes → cloud price is used.
+     */
+    private var nativePricesBySku: Map<String, NativeDisplayPrice> = emptyMap()
+
+    /** Last applied SuiteConfig — kept so a late native-price fetch can rebuild + re-emit plans. */
+    private var currentSuite: SuiteConfig? = null
+
+    /**
      * THE single resolved billing region — the one (country, currency) the whole paywall uses:
      * the displayed price AND every payment provider's checkout link read this, so a provider
      * can never silently route a different currency than the one shown.
@@ -147,10 +161,14 @@ object PayCraft {
         this.initOptions = options
         // Decide the billing country ONCE — the single deciding point that drives the /config
         // locale, the displayed price, and every provider's checkout currency. Override wins,
-        // else the device region, else "US". (PlatformInfo reads can throw in odd test
-        // harnesses — same guard as the device fingerprint below.)
+        // else the device region, else "US". The STORE STOREFRONT (the true billing region) is a
+        // suspend read on the native client, so it can't be resolved here in the synchronous
+        // initialize(); it is folded in at fetch time (see fetchAndApplySuiteConfig, where the
+        // country is re-resolved with the storefront before the /config request). (PlatformInfo
+        // reads can throw in odd test harnesses — same guard as the device fingerprint below.)
         this._activeCountry = CurrencyResolver.resolveCountry(
             override = options.localeOverride,
+            storeStorefront = null,
             deviceCountry = runCatching { PlatformInfo.country }.getOrNull(),
             configLocale = null,
         )
@@ -245,8 +263,15 @@ object PayCraft {
             // may not be ready during the synchronous initialize() call (startup ordering
             // race). Reading PlatformInfo.country at fetch time, after app init settles, picks
             // up the real billing region (e.g. an Indian SIM under an en-GB phone language).
+            //
+            // Prefer the STORE STOREFRONT over the device locale: the storefront is where the
+            // user's Play/Apple payment account lives (the true billing region), so an India buyer
+            // on an en-GB phone resolves to "IN" (₹) rather than "GB" (£). storefrontCountry() is a
+            // native-store suspend read → null on web-checkout platforms, then device/cloud/US.
+            val storefront = runCatching { nativeBillingClientOrNull()?.storefrontCountry() }.getOrNull()
             _activeCountry = CurrencyResolver.resolveCountry(
                 override = options.localeOverride,
+                storeStorefront = storefront,
                 deviceCountry = runCatching { PlatformInfo.country }.getOrNull(),
                 configLocale = null,
             )
@@ -265,6 +290,10 @@ object PayCraft {
                 header("Authorization", "Bearer ${backend.supabaseAnonKey}")
                 header("apikey", backend.supabaseAnonKey)
                 header("Accept-Language", "en-$locale")
+                // Platform drives per-platform provider ordering server-side (migration 075): the
+                // `/config` edge function orders providers[] by the tenant's routing rule for this
+                // platform, so [primaryProvider] is the tenant's intended provider per platform.
+                header("X-PayCraft-Platform", runCatching { PlatformInfo.platform.lowercase() }.getOrDefault(""))
             }
             if (!response.status.isSuccess()) {
                 PayCraftLogger.onError(
@@ -280,8 +309,24 @@ object PayCraft {
             }
             val cfg = json.decodeFromString(SuiteConfig.serializer(), raw)
                 .copy(fetchedAtEpochMillis = currentTimeMillis())
+            // Fold the server's edge IP-geo (cfg.geoCountry) into the unified country resolution.
+            // It beats the device locale but NOT the store storefront — recomputed here so a
+            // web/desktop buyer (no storefront) resolves to the authoritative server country
+            // instead of only the device locale. Pre-fetch resolution (above) had no server signal.
+            _activeCountry = CurrencyResolver.resolveCountry(
+                override = options.localeOverride,
+                storeStorefront = storefront,
+                deviceCountry = runCatching { PlatformInfo.country }.getOrNull(),
+                configLocale = cfg.locale,
+                serverGeo = cfg.geoCountry,
+            )
             applySuiteConfig(cfg)
             PayCraftLogger.onFlow("loadConfig", "cloud fetch ok — ${cfg.products.size} products")
+            // Now that products (and their store product ids) are loaded, ask the native store for
+            // its OWN localized price per product and re-apply so the paywall shows the store truth
+            // (e.g. ₹799 from the IN storefront) instead of the cloud /config price. No-op on
+            // web-checkout platforms (WebCheckoutNativeBillingClient returns null).
+            resolveAndApplyNativePrices(cfg)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -290,6 +335,50 @@ object PayCraft {
             http.close()
         }
     }
+
+    /** The Koin-resolved native billing client (Play on Android / StoreKit2 on iOS), or null. */
+    private fun nativeBillingClientOrNull(): NativeBillingClient? =
+        runCatching { KoinPlatform.getKoinOrNull()?.getOrNull<NativeBillingClient>() }.getOrNull()
+
+    /**
+     * The store product id for [product] on the ACTIVE native lane — Play `play_product_id` on
+     * Android, App Store `app_store_product_id` on iOS. Null on web-checkout platforms or when the
+     * dashboard did not configure a native id (→ no native price, cloud price is used).
+     */
+    private fun storeProductIdFor(product: ProductDto): String? = when (PlatformInfo.platform.lowercase()) {
+        "android" -> product.playProductId
+        "ios" -> product.appStoreProductId
+        else -> null
+    }?.takeIf { it.isNotBlank() }
+
+    /**
+     * Ask the native store for each product's OWN localized price (Play `formattedPrice` /
+     * StoreKit `displayPrice`), keyed by plan sku, then re-apply the suite so the paywall re-emits
+     * with the store truth (the USD/₹ the store will actually charge) instead of the cloud price.
+     *
+     * USD/cloud fallback is automatic: any product with no native id, or that the store can't
+     * price (unresolved storefront/product), is simply absent from the map → [toBillingPlans]
+     * keeps its cloud-resolved price (which already falls back to the USD base currency).
+     */
+    private suspend fun resolveAndApplyNativePrices(suite: SuiteConfig) {
+        val client = nativeBillingClientOrNull() ?: return
+        val prices = mutableMapOf<String, NativeDisplayPrice>()
+        for (product in suite.products) {
+            val storeProductId = storeProductIdFor(product) ?: continue
+            val native = runCatching { client.nativeDisplayPrice(storeProductId) }.getOrNull() ?: continue
+            prices[product.sku] = native
+        }
+        if (prices.isNotEmpty()) {
+            nativePricesBySku = prices
+            // Re-apply the SAME suite: rebuilds config.plans with native prices and re-emits the
+            // flow so the collecting paywall ViewModel recomposes with the store-localized price.
+            applySuiteConfig(suite)
+            PayCraftLogger.onFlow("loadConfig", "native store prices applied for ${prices.size} products")
+        }
+    }
+
+    /** The native store's localized price for a plan sku, if resolved. See [displayPrice] wiring. */
+    internal fun nativePriceForSku(sku: String): NativeDisplayPrice? = nativePricesBySku[sku]
 
     /**
      * Empty PaymentProvider used as a placeholder when [config] is populated
@@ -313,7 +402,8 @@ object PayCraft {
         // value (null on cold start) and drop the plans — and it would never re-fire,
         // because the StateFlow value wouldn't change again. Config-first ordering
         // guarantees every collector observes the freshly-resolved config.
-        val resolved = suite.toPayCraftConfig(backend, apiKey)
+        currentSuite = suite
+        val resolved = suite.toPayCraftConfig(backend, apiKey, nativePricesBySku)
         this.config = resolved
         // The cloud resolved prices for the active locale; capture the single currency every
         // provider + the displayed price now share (uniform across products for a locale).
@@ -399,12 +489,14 @@ object PayCraft {
     /**
      * Start checkout for [plan].
      *
-     * Google-Play-compliance routing (Payments policy): on **Android** for a **digital** product the
-     * checkout transacts through **Google Play Billing** ([BillingManager.purchaseViaPlayBilling]) —
-     * it NEVER opens an external Stripe/Razorpay web payment page (the "leads users to a payment
-     * method other than Google Play's billing system" violation). On every other platform
-     * (web/desktop/ios/macos) — or a genuinely physical product — it keeps the existing web-link
-     * path. The lane is decided by [resolveCheckoutLane], the single unit-tested decision point.
+     * Store-compliance routing (Payments policy): on **Android** for a **digital** product the
+     * checkout transacts through **Google Play Billing** ([BillingManager.purchaseViaPlayBilling]),
+     * and on **iOS/macOS** through **Apple StoreKit** ([BillingManager.purchaseViaStoreKit], Apple
+     * Guideline 3.1.1) — it NEVER opens an external Stripe/Razorpay web payment page (the Play "leads
+     * users to a payment method other than Google Play's billing system" / the Apple 3.1.1 "digital
+     * subscription must use IAP" violations). On a platform with no native store (web/desktop) — or a
+     * genuinely physical product — it keeps the existing web-link path. The lane is decided by
+     * [resolveCheckoutLane], the single unit-tested decision point.
      */
     fun checkout(plan: BillingPlan, email: String? = null) {
         when (val lane = resolveCheckoutLane(PlatformInfo.platform, plan)) {
@@ -413,11 +505,14 @@ object PayCraft {
                 val url = appendCouponParam(baseUrl, appliedCoupons[plan.id]?.code)
                 PayCraftPlatform.openUrl(url)
             }
-            // Both NativePlay and Misconfigured delegate to the billing manager: it purchases via
-            // Play Billing, or (misconfigured play_product_id) sets BillingState.Error WITHOUT ever
-            // opening the browser — the anti-steering guarantee.
-            is CheckoutLane.NativePlay, is CheckoutLane.Misconfigured ->
-                routeAndroidDigitalToPlay(plan, email, lane)
+            // NativePlay/NativeStoreKit/Misconfigured all delegate to the billing manager: it
+            // purchases via the store lane, or (misconfigured product id) sets BillingState.Error
+            // WITHOUT ever opening the browser — the anti-steering guarantee on both stores.
+            is CheckoutLane.NativePlay,
+            is CheckoutLane.NativeStoreKit,
+            is CheckoutLane.Misconfigured,
+            ->
+                routeNativeDigital(plan, email, lane)
         }
     }
 
@@ -425,8 +520,9 @@ object PayCraft {
      * Checkout via a specific provider picked by the user in `ProviderBottomSheet`.
      * Used by the multi-provider flow; single-provider apps use [checkout] instead.
      *
-     * Applies the SAME Google-Play-compliance routing as [checkout]: on Android+digital the provider
-     * pick is irrelevant — the purchase still goes through Google Play Billing, never the web link.
+     * Applies the SAME store-compliance routing as [checkout]: on Android+digital the purchase goes
+     * through Google Play Billing and on iOS/macOS+digital through StoreKit — the provider pick is
+     * irrelevant on a native store, never the web link.
      */
     internal fun checkoutWithProvider(plan: BillingPlan, provider: ProviderDto, email: String? = null) {
         when (val lane = resolveCheckoutLane(PlatformInfo.platform, plan)) {
@@ -436,17 +532,24 @@ object PayCraft {
                 val url = appendCouponParam(baseUrl, appliedCoupons[plan.id]?.code)
                 PayCraftPlatform.openUrl(url)
             }
-            is CheckoutLane.NativePlay, is CheckoutLane.Misconfigured ->
-                routeAndroidDigitalToPlay(plan, email, lane)
+            is CheckoutLane.NativePlay,
+            is CheckoutLane.NativeStoreKit,
+            is CheckoutLane.Misconfigured,
+            ->
+                routeNativeDigital(plan, email, lane)
         }
     }
 
     /**
-     * Hand an Android digital checkout to Google Play Billing via the Koin-resolved [BillingManager].
-     * The manager owns the billing-state flow the paywall observes (Loading → Success/Cancelled/Error)
-     * and enforces the anti-steering guard (blank play product id → error, never a browser fallback).
+     * Hand a native digital checkout to the store's in-app billing via the Koin-resolved
+     * [BillingManager] — Google Play Billing on Android ([BillingManager.purchaseViaPlayBilling]) or
+     * StoreKit on iOS/macOS ([BillingManager.purchaseViaStoreKit], Apple Guideline 3.1.1). The
+     * manager owns the billing-state flow the paywall observes (Loading → Success/Cancelled/Error) and
+     * enforces the anti-steering guard (blank product id → error, never a browser fallback). A
+     * [CheckoutLane.Misconfigured] is dispatched to the platform-appropriate lane so it fails closed
+     * with the correct store message — never a web fallback.
      */
-    private fun routeAndroidDigitalToPlay(plan: BillingPlan, email: String?, lane: CheckoutLane) {
+    private fun routeNativeDigital(plan: BillingPlan, email: String?, lane: CheckoutLane) {
         val billingManager = KoinPlatform.getKoinOrNull()?.getOrNull<BillingManager>()
         if (billingManager == null) {
             // No Koin graph (should never happen in a real app — the paywall itself is Koin-resolved).
@@ -454,15 +557,27 @@ object PayCraft {
             // the exact anti-steering violation we are preventing.
             PayCraftLogger.onError(
                 "checkout",
-                "Android digital checkout for ${plan.id} but no BillingManager in the Koin graph — " +
-                    "load PayCraftModule + paycraftPlayBillingModule. Refusing web fallback (anti-steering).",
+                "native digital checkout for ${plan.id} but no BillingManager in the Koin graph — " +
+                    "load PayCraftModule + the platform billing module. Refusing web fallback (anti-steering).",
             )
             return
         }
-        if (lane is CheckoutLane.Misconfigured) {
-            PayCraftLogger.onError("checkout", "${lane.reason} for plan ${plan.id} (Android digital)")
+        when (lane) {
+            is CheckoutLane.NativePlay -> billingManager.purchaseViaPlayBilling(plan, email)
+            is CheckoutLane.NativeStoreKit -> billingManager.purchaseViaStoreKit(plan, email)
+            is CheckoutLane.Misconfigured -> {
+                PayCraftLogger.onError("checkout", "${lane.reason} for plan ${plan.id} (native digital)")
+                // Fail closed through the platform-appropriate lane so the anti-steering guard sets
+                // BillingState.Error with the right store message — never a web fallback.
+                val platform = PlatformInfo.platform
+                if (platform.equals("ios", ignoreCase = true) || platform.equals("macos", ignoreCase = true)) {
+                    billingManager.purchaseViaStoreKit(plan, email)
+                } else {
+                    billingManager.purchaseViaPlayBilling(plan, email)
+                }
+            }
+            is CheckoutLane.Web -> Unit // unreachable — Web is handled by the caller's when-branch.
         }
-        billingManager.purchaseViaPlayBilling(plan, email)
     }
 
     /**
@@ -505,13 +620,26 @@ data class PayCraftConfig(
 enum class ConfigSource { Cloud, SelfHosted, Mock }
 
 /**
- * Map a cloud-fetched [SuiteConfig] into the existing [PayCraftConfig] shape.
- * Provider construction is best-effort — the first registered provider wins for the
- * legacy single-provider field. Multi-provider apps consume `SuiteConfig.providers`
- * directly via the bottom-sheet picker.
+ * The tenant's PRIMARY provider for the active platform. The `/config` server orders
+ * [SuiteConfig.providers] by the tenant's per-platform routing preference (migration 075), so the
+ * SDK trusts that server order and takes the head rather than making its own arbitrary pick — a
+ * "desktop → Stripe" tenant gets Stripe first on desktop, an "android → Razorpay" tenant gets
+ * Razorpay first on Android. Returns null only when the tenant has zero enabled providers.
  */
-internal fun SuiteConfig.toPayCraftConfig(backend: PayCraftBackend, apiKey: String?): PayCraftConfig {
-    val firstProvider = providers.firstOrNull()
+internal fun SuiteConfig.primaryProvider(): ProviderDto? = providers.firstOrNull()
+
+/**
+ * Map a cloud-fetched [SuiteConfig] into the existing [PayCraftConfig] shape.
+ * The primary provider is the server-ordered head ([primaryProvider]) — the tenant's per-platform
+ * preference — not an arbitrary DB pick. Multi-provider apps consume `SuiteConfig.providers`
+ * directly (in the same server order) via the bottom-sheet picker.
+ */
+internal fun SuiteConfig.toPayCraftConfig(
+    backend: PayCraftBackend,
+    apiKey: String?,
+    nativePricesBySku: Map<String, NativeDisplayPrice> = emptyMap(),
+): PayCraftConfig {
+    val firstProvider = primaryProvider()
     val provider: PaymentProvider = if (firstProvider != null) {
         SuiteProviderAdapter(firstProvider)
     } else {
@@ -521,7 +649,7 @@ internal fun SuiteConfig.toPayCraftConfig(backend: PayCraftBackend, apiKey: Stri
         supabaseUrl = backend.supabaseUrl,
         supabaseAnonKey = backend.supabaseAnonKey,
         provider = provider,
-        plans = products.toBillingPlans(paywall.popularPlanSku),
+        plans = products.toBillingPlans(paywall.popularPlanSku, nativePricesBySku),
         benefits = emptyList(), // benefits surface on PaywallDto.themeJsonb in cloud mode
         supportEmail = paywall.supportEmail ?: "support@paycraft.mobilebytesensei.com",
         apiKey = apiKey,
@@ -533,7 +661,10 @@ internal fun SuiteConfig.toPayCraftConfig(backend: PayCraftBackend, apiKey: Stri
     )
 }
 
-private fun List<ProductDto>.toBillingPlans(popularSku: String?): List<BillingPlan> {
+private fun List<ProductDto>.toBillingPlans(
+    popularSku: String?,
+    nativePricesBySku: Map<String, NativeDisplayPrice> = emptyMap(),
+): List<BillingPlan> {
     val subscriptions = filter { it.type == "subscription" || it.type == "lifetime" }
         .sortedBy { it.displayOrder }
     val trials = filter { it.type == "trial" }
@@ -545,14 +676,21 @@ private fun List<ProductDto>.toBillingPlans(popularSku: String?): List<BillingPl
             else -> null
         }
 
+        // Prefer the NATIVE store price (Play/StoreKit) when one was resolved for this sku — it is
+        // the store truth (already reflects the store storefront, e.g. ₹799 from the IN storefront)
+        // and its own formatted string is authoritative, overriding the cloud /config price+currency.
+        val nativePrice = nativePricesBySku[dto.sku]
+
         // Resolve the display amounts. resolvedPrice wins (per-locale); fall back to
         // baseCurrency for tenants without a tenant_pricing row.
         val originalCents = dto.resolvedPrice?.amountCents ?: dto.basePriceCents
-        val originalCurrency = dto.resolvedPrice?.currency ?: dto.baseCurrency
+        val originalCurrency = nativePrice?.currencyCode ?: dto.resolvedPrice?.currency ?: dto.baseCurrency
 
         // Apply the auto-discount when discount_percent is set AND not expired.
         // Server-side /config already strips expired discounts (see edge function),
         // so by the time we land here a non-null discountPercent means it's active.
+        // Discounts apply to the cloud amount only; a native store price is the store's own final
+        // charge, so it is shown as-is (the store applies its own promotions).
         val discountPercent = dto.discountPercent?.takeIf { it in 1..99 }
         val effectiveCents = if (discountPercent != null) {
             (originalCents.toLong() * (100 - discountPercent) / 100).toInt()
@@ -563,14 +701,14 @@ private fun List<ProductDto>.toBillingPlans(popularSku: String?): List<BillingPl
         BillingPlan(
             id = dto.sku,
             name = dto.displayName,
-            price = formatMoney(effectiveCents, originalCurrency),
-            originalPrice = if (discountPercent != null) {
+            price = nativePrice?.formatted ?: formatMoney(effectiveCents, originalCurrency),
+            originalPrice = if (discountPercent != null && nativePrice == null) {
                 formatMoney(originalCents, originalCurrency)
             } else {
                 null
             },
-            discountPercent = discountPercent,
-            discountEndsAt = if (discountPercent != null) dto.discountEndsAt else null,
+            discountPercent = if (nativePrice == null) discountPercent else null,
+            discountEndsAt = if (discountPercent != null && nativePrice == null) dto.discountEndsAt else null,
             interval = dto.interval ?: "lifetime",
             rank = idx,
             isPopular = popularSku != null && dto.sku == popularSku,
