@@ -33,12 +33,7 @@ data class DetectedCountry(val country: String, val provenance: CountryProvenanc
  * consumes only `.country`; the [provenance] is exposed for callers that want to gate trust.
  */
 object CountryDetector {
-    fun resolve(
-        storefront: String?,
-        serverGeo: String?,
-        deviceSim: String?,
-        configLocale: String?,
-    ): DetectedCountry {
+    fun resolve(storefront: String?, serverGeo: String?, deviceSim: String?, configLocale: String?): DetectedCountry {
         storefront?.trim()?.takeIf { it.isNotBlank() }
             ?.let { return DetectedCountry(it, CountryProvenance.AUTHORITATIVE_STORE) }
         serverGeo?.trim()?.takeIf { it.isNotBlank() }
