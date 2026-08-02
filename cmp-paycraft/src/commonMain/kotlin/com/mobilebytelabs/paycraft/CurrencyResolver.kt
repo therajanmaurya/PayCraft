@@ -33,26 +33,39 @@ object CurrencyResolver {
     const val FALLBACK_CURRENCY = "USD"
 
     /**
-     * Decide the billing country once, override-wins, then STORE STOREFRONT before device:
-     * [override] (InitOptions.localeOverride) → [storeStorefront] (Play `getBillingConfig`
-     * countryCode / StoreKit `Storefront.current` countryCode) → [deviceCountry]
-     * (PlatformInfo.country) → [configLocale] (SuiteConfig.locale) → [DEFAULT_COUNTRY].
+     * Decide the billing country once, override-wins, then via [CountryDetector] which folds the
+     * unified cross-platform signal: [override] (InitOptions.localeOverride) → [storeStorefront]
+     * (Play `getBillingConfig` countryCode / StoreKit `Storefront.current` countryCode) →
+     * [serverGeo] (the PayCraft cloud's edge IP-country, `geo_country` on `/config`) →
+     * [deviceCountry] (PlatformInfo.country) → [configLocale] (SuiteConfig.locale) →
+     * [DEFAULT_COUNTRY].
      *
      * The store storefront is the region the user's Play/Apple PAYMENT ACCOUNT lives in — the true
-     * billing region — so it wins over the device UI locale. An India buyer whose phone language is
-     * en-GB has an "IN" storefront and a "GB" device country; storefront-first resolves to "IN" so
-     * the paywall and every provider bill in ₹/INR, not £/GBP.
+     * billing region — so it wins over everything below the developer override. The server IP-geo
+     * is one uniform signal available on every platform (web/desktop too, where no storefront
+     * exists), so it beats the device UI locale. An India buyer whose phone language is en-GB has
+     * an "IN" storefront and a "GB" device country; storefront-first resolves to "IN" so the paywall
+     * and every provider bill in ₹/INR, not £/GBP.
+     *
+     * [serverGeo] defaults to null so pre-fetch callers (before `/config` returns `geo_country`)
+     * resolve exactly as before; the fetch path re-resolves once the server signal is available.
+     * Use [CountryDetector.resolve] directly when the [CountryProvenance] of the result is needed.
      */
     fun resolveCountry(
         override: String?,
         storeStorefront: String?,
         deviceCountry: String?,
         configLocale: String?,
-    ): String = override?.trim()?.takeIf { it.isNotBlank() }
-        ?: storeStorefront?.trim()?.takeIf { it.isNotBlank() }
-        ?: deviceCountry?.trim()?.takeIf { it.isNotBlank() }
-        ?: configLocale?.trim()?.takeIf { it.isNotBlank() }
-        ?: DEFAULT_COUNTRY
+        serverGeo: String? = null,
+    ): String {
+        override?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+        return CountryDetector.resolve(
+            storefront = storeStorefront,
+            serverGeo = serverGeo,
+            deviceSim = deviceCountry,
+            configLocale = configLocale,
+        ).country
+    }
 
     /**
      * The one currency the whole paywall uses — the currency the cloud resolved for the active

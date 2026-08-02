@@ -29,6 +29,7 @@ interface Rule {
   country_code: string | null
   currency: string | null
   product_type: string | null
+  platform: string | null
   priority_methods: string[]
   priority: number
 }
@@ -149,6 +150,7 @@ function RulesList({
             <Th>Country</Th>
             <Th>Currency</Th>
             <Th>Product type</Th>
+            <Th>Platform</Th>
             <Th>Method order</Th>
             <Th right>—</Th>
           </tr>
@@ -165,6 +167,11 @@ function RulesList({
               <Td>{r.currency ?? <span className="text-ink-400">Any</span>}</Td>
               <Td>
                 {r.product_type ?? <span className="text-ink-400">Any</span>}
+              </Td>
+              <Td>
+                {r.platform && r.platform !== "any"
+                  ? r.platform
+                  : <span className="text-ink-400">Any</span>}
               </Td>
               <Td>
                 <div className="flex items-center gap-1 flex-wrap">
@@ -211,6 +218,7 @@ function NewRuleForm({
   const [country, setCountry] = useState("")
   const [currency, setCurrency] = useState("")
   const [productType, setProductType] = useState("")
+  const [platform, setPlatform] = useState("")
   const [priorityMethods, setPriorityMethods] = useState<string[]>([])
   const [priority, setPriority] = useState(100)
   const [saving, setSaving] = useState(false)
@@ -255,6 +263,7 @@ function NewRuleForm({
           country_code: country || null,
           currency: currency || null,
           product_type: productType || null,
+          platform: platform || "any",
           priority_methods: priorityMethods,
           priority,
         }),
@@ -269,6 +278,7 @@ function NewRuleForm({
         country_code: country || null,
         currency: currency || null,
         product_type: productType || null,
+        platform: platform || "any",
         priority_methods: priorityMethods,
         priority,
       })
@@ -311,7 +321,7 @@ function NewRuleForm({
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <Select
           label="Country"
           value={country}
@@ -345,6 +355,17 @@ function NewRuleForm({
           <option value="subscription">Subscription</option>
           <option value="trial">Trial</option>
           <option value="lifetime">Lifetime</option>
+        </Select>
+        <Select
+          label="Platform"
+          value={platform}
+          onChange={setPlatform}
+          placeholder="Any"
+        >
+          <option value="ios">iOS</option>
+          <option value="android">Android</option>
+          <option value="desktop">Desktop</option>
+          <option value="web">Web</option>
         </Select>
         <div className="space-y-1.5">
           <label className="text-[11px] font-bold uppercase tracking-wider text-ink-400 block">

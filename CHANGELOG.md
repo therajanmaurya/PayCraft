@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased] — unified country detection + per-platform provider routing
+
+Adds a unified, cross-platform buyer-country signal and platform-aware provider selection, without touching the shipped 2.3.x storefront/native-price billing core. See `paycraft-provider-platform-onboarding` epic.
+
+### Added
+
+- **Unified country detection** — `CountryDetector` (`cmp-paycraft/.../CountryDetector.kt`) folds a new signal order `store storefront → server IP-geo → device/SIM → config locale → DEFAULT`, each tagged with a `CountryProvenance` (`AUTHORITATIVE_STORE` / `SERVER_IP_GEO` / `DEVICE_SIM` / `LOCALE_FALLBACK`). The `/config` edge function reads the hosting edge IP-country header (`x-vercel-ip-country` / `cf-ipcountry` / `cloudfront-viewer-country`) and returns `geo_country` + `geo_source`, so web/desktop (no store storefront) get an authoritative country instead of only the device locale. `CurrencyResolver.resolveCountry` gained a backward-compatible `serverGeo` param; the SDK re-resolves post-fetch and sends `X-PayCraft-Platform`.
+- **Per-platform provider routing** — migration `075` adds a `platform` dimension (`ios/android/desktop/web/any`) to `tenant_routing_rules` + the upsert RPC. `checkout-router.ts` matches on platform (`platformMatches`); `/config` orders `providers[]` by the tenant's platform routing preference (`orderProvidersByPlatform`) so the SDK's `primaryProvider()` is the intended provider per platform (Stripe on desktop, Razorpay on Android, …) instead of an arbitrary `firstOrNull()`. Dashboard smart-routing editor gains a Platform column. `resolveCheckoutLane` (store-compliance) is unchanged and remains the outer guard.
+
+### Fixed
+
+- **Versioned migrations** — `supabase/migrations/` was blanket-gitignored, silently dropping every schema change from version control on deploy. `075` is now tracked via a `.gitignore` negation, with a note to track future migrations the same way.
+
 ## [2.2.0] — Google Play Payments-policy compliance + native billing
 
 Makes PayCraft compliant with Google Play's Payments policy: on Android, digital-subscription checkout now transacts through **Google Play Billing** instead of opening an external web payment page (the anti-steering violation that flagged consumer apps such as Reels Downloader `com.sensei.social`). Web/link-out remains the path on web/desktop and for physical goods.

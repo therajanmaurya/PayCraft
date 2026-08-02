@@ -290,6 +290,10 @@ object PayCraft {
                 header("Authorization", "Bearer ${backend.supabaseAnonKey}")
                 header("apikey", backend.supabaseAnonKey)
                 header("Accept-Language", "en-$locale")
+                // Platform drives per-platform provider ordering server-side (migration 075): the
+                // `/config` edge function orders providers[] by the tenant's routing rule for this
+                // platform, so [primaryProvider] is the tenant's intended provider per platform.
+                header("X-PayCraft-Platform", runCatching { PlatformInfo.platform.lowercase() }.getOrDefault(""))
             }
             if (!response.status.isSuccess()) {
                 PayCraftLogger.onError(
@@ -305,6 +309,17 @@ object PayCraft {
             }
             val cfg = json.decodeFromString(SuiteConfig.serializer(), raw)
                 .copy(fetchedAtEpochMillis = currentTimeMillis())
+            // Fold the server's edge IP-geo (cfg.geoCountry) into the unified country resolution.
+            // It beats the device locale but NOT the store storefront — recomputed here so a
+            // web/desktop buyer (no storefront) resolves to the authoritative server country
+            // instead of only the device locale. Pre-fetch resolution (above) had no server signal.
+            _activeCountry = CurrencyResolver.resolveCountry(
+                override = options.localeOverride,
+                storeStorefront = storefront,
+                deviceCountry = runCatching { PlatformInfo.country }.getOrNull(),
+                configLocale = cfg.locale,
+                serverGeo = cfg.geoCountry,
+            )
             applySuiteConfig(cfg)
             PayCraftLogger.onFlow("loadConfig", "cloud fetch ok — ${cfg.products.size} products")
             // Now that products (and their store product ids) are loaded, ask the native store for
@@ -605,17 +620,26 @@ data class PayCraftConfig(
 enum class ConfigSource { Cloud, SelfHosted, Mock }
 
 /**
+ * The tenant's PRIMARY provider for the active platform. The `/config` server orders
+ * [SuiteConfig.providers] by the tenant's per-platform routing preference (migration 075), so the
+ * SDK trusts that server order and takes the head rather than making its own arbitrary pick — a
+ * "desktop → Stripe" tenant gets Stripe first on desktop, an "android → Razorpay" tenant gets
+ * Razorpay first on Android. Returns null only when the tenant has zero enabled providers.
+ */
+internal fun SuiteConfig.primaryProvider(): ProviderDto? = providers.firstOrNull()
+
+/**
  * Map a cloud-fetched [SuiteConfig] into the existing [PayCraftConfig] shape.
- * Provider construction is best-effort — the first registered provider wins for the
- * legacy single-provider field. Multi-provider apps consume `SuiteConfig.providers`
- * directly via the bottom-sheet picker.
+ * The primary provider is the server-ordered head ([primaryProvider]) — the tenant's per-platform
+ * preference — not an arbitrary DB pick. Multi-provider apps consume `SuiteConfig.providers`
+ * directly (in the same server order) via the bottom-sheet picker.
  */
 internal fun SuiteConfig.toPayCraftConfig(
     backend: PayCraftBackend,
     apiKey: String?,
     nativePricesBySku: Map<String, NativeDisplayPrice> = emptyMap(),
 ): PayCraftConfig {
-    val firstProvider = providers.firstOrNull()
+    val firstProvider = primaryProvider()
     val provider: PaymentProvider = if (firstProvider != null) {
         SuiteProviderAdapter(firstProvider)
     } else {
