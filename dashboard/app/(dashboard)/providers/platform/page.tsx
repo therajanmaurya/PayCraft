@@ -30,7 +30,7 @@ export default async function PlatformProvidersPage() {
     <div>
       <PageHeader
         title="Platform providers"
-        subtitle="Set your primary payment provider for web & desktop checkout — every other connected provider becomes an automatic fallback. iOS and Android digital subscriptions always use the native store."
+        subtitle="For each platform, pick a primary provider and an optional fallback used when the primary can't serve a customer. iOS and Android digital subscriptions always use the native store."
       />
       <PlatformProvidersPanel
         registry={(registryRes.data ?? []) as any}
