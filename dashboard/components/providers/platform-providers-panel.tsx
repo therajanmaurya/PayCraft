@@ -1,46 +1,57 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
 /**
- * Platform → provider selector (migration 075 routing engine, surfaced as a first-class panel).
+ * Primary provider + fallback (migration 075 routing engine, simplified).
  *
- * Lets a merchant pick which payment provider each app platform uses, WITH each provider's fee shown
- * so they can route to the cheapest connection:
- *   - iOS / Android — digital subscriptions ALWAYS transact through the native store (App Store /
- *     Google Play) per Apple 3.1.1 / Google Play Payments policy (enforced by the SDK compliance lane,
- *     not routable). The dropdown sets the WEB-lane / physical-goods fallback provider.
- *   - Desktop / Web — no native store, so the merchant picks the PSP freely.
+ * One list of supported providers, each with connection status. The merchant marks ONE as PRIMARY;
+ * every other connected provider becomes an automatic fallback (cheapest first) if the primary is
+ * unavailable for a given customer. Saved as a single global routing rule whose ordered
+ * `priority_methods` is `[primary, ...fallbacks]`.
  *
- * Defaults: when a platform has no explicit rule, the dropdown shows the CHEAPEST connected provider
- * (the router's actual default), named + with its fee, so it's never ambiguous. Choosing a specific
- * provider writes/replaces a `platform=<p>` routing rule; choosing "Cheapest" removes it.
+ * iOS/Android digital subscriptions always transact through the native store (App Store / Google
+ * Play) per store policy — those are shown separately as automatic, not part of the primary/fallback
+ * ordering (which governs web/desktop checkout).
  */
 
 interface RegistryRow {
   method: string
   provider: string
-  display_name: string
   fee_percent: number | null
 }
 interface RoutingRule {
   id: string
   platform: string | null
   priority_methods: string[]
+  country_code?: string | null
+  currency?: string | null
+  product_type?: string | null
 }
 
-const PLATFORMS: { key: string; label: string; native?: string; hint: string }[] = [
-  { key: "ios", label: "iOS", native: "App Store (StoreKit 2)", hint: "Digital subscriptions use the App Store automatically (Apple 3.1.1). Dropdown sets the web / physical-goods fallback." },
-  { key: "android", label: "Android", native: "Google Play Billing", hint: "Digital subscriptions use Google Play automatically (Payments policy). Dropdown sets the web / physical-goods fallback." },
-  { key: "desktop", label: "Desktop", hint: "No native store — pick the provider used for checkout on desktop." },
-  { key: "web", label: "Web", hint: "No native store — pick the provider used for checkout on the web." },
+const DISPLAY: Record<string, string> = {
+  stripe: "Stripe",
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  direct_upi: "UPI Direct",
+  google_play: "Google Play Billing",
+  app_store: "App Store (StoreKit 2)",
+}
+const CONNECT_HREF: Record<string, string> = {
+  stripe: "/providers/stripe",
+  razorpay: "/providers/razorpay",
+  cashfree: "/providers/cashfree",
+  direct_upi: "/providers/upi",
+  google_play: "/providers/google-play",
+  app_store: "/providers/app-store",
+}
+const NATIVE: { key: string; on: string }[] = [
+  { key: "google_play", on: "Android" },
+  { key: "app_store", on: "iOS" },
 ]
-
-function prettyProvider(p: string) {
-  return p.charAt(0).toUpperCase() + p.slice(1).replace(/[-_]/g, " ")
-}
 
 export function PlatformProvidersPanel({
   registry,
@@ -51,141 +62,167 @@ export function PlatformProvidersPanel({
   connectedProviders: string[]
   initialRules: RoutingRule[]
 }) {
-  // provider → { cheapest method, its fee% }. Registry is fee-sorted, so the first row per provider
-  // is its cheapest method.
+  const connected = new Set(connectedProviders)
+
+  // provider → { cheapest method, fee } from the fee-sorted registry (web providers only)
   const providerInfo = new Map<string, { method: string; fee: number }>()
   for (const r of registry) {
     if (!providerInfo.has(r.provider)) providerInfo.set(r.provider, { method: r.method, fee: r.fee_percent ?? 99 })
   }
-  // connected providers that have a routable web method, sorted CHEAPEST first
-  const options = [...new Set(connectedProviders)]
-    .filter((p) => providerInfo.has(p))
-    .sort((a, b) => (providerInfo.get(a)!.fee) - (providerInfo.get(b)!.fee))
-  const cheapest = options[0] ?? null
+  // all supported WEB providers, cheapest first
+  const webProviders = [...providerInfo.keys()].sort((a, b) => providerInfo.get(a)!.fee - providerInfo.get(b)!.fee)
 
-  // current explicit platform → provider, from the rules
-  const initial: Record<string, string> = {}
-  const ruleIdByPlatform = new Map<string, string>()
-  for (const rule of initialRules) {
-    if (!rule.platform || rule.platform === "any") continue
-    ruleIdByPlatform.set(rule.platform, rule.id)
-    const provider = registry.find((r) => r.method === rule.priority_methods?.[0])?.provider
-    if (provider) initial[rule.platform] = provider
-  }
+  // rules this panel manages = the "global" ones (no country/currency/product scoping)
+  const managedRuleIds = initialRules
+    .filter((r) => !r.country_code && !r.currency && !r.product_type)
+    .map((r) => r.id)
+  // current primary = first method of the managed rule that carries an ordered list
+  const managedWithMethods = initialRules.find(
+    (r) => !r.country_code && !r.currency && !r.product_type && (r.priority_methods?.length ?? 0) > 0,
+  )
+  const initialPrimary =
+    (managedWithMethods && registry.find((r) => r.method === managedWithMethods.priority_methods[0])?.provider) || ""
 
-  const [selection, setSelection] = useState<Record<string, string>>(initial)
-  const [saving, setSaving] = useState<string | null>(null)
-  const [saved, setSaved] = useState<string | null>(null)
+  const [primary, setPrimary] = useState<string>(initialPrimary)
+  const [ruleIds, setRuleIds] = useState<string[]>(managedRuleIds)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const feeLabel = (p: string) => {
+  const fee = (p: string) => {
     const f = providerInfo.get(p)?.fee
     return f != null && f < 99 ? `${f}%` : "—"
   }
+  const pretty = (p: string) => DISPLAY[p] ?? p
 
-  async function save(platform: string, provider: string) {
+  async function choosePrimary(provider: string) {
+    if (!connected.has(provider) || saving) return
     setError(null)
-    setSaving(platform)
-    setSelection((s) => ({ ...s, [platform]: provider }))
+    setSaving(true)
+    setSaved(false)
+    const prev = primary
+    setPrimary(provider)
     try {
-      const existingId = ruleIdByPlatform.get(platform)
-      if (existingId) {
-        await fetch(`/api/routing-rules/${existingId}`, { method: "DELETE" })
-        ruleIdByPlatform.delete(platform)
+      // Replace the managed global rule: delete existing, then create one ordered rule.
+      for (const id of ruleIds) {
+        await fetch(`/api/routing-rules/${id}`, { method: "DELETE" }).catch(() => {})
       }
-      if (provider) {
-        const method = providerInfo.get(provider)?.method
-        const res = await fetch("/api/routing-rules", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ platform, priority_methods: method ? [method] : [], country_code: null, currency: null, product_type: null, priority: 50 }),
-        })
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}))
-          throw new Error(j?.error ?? `save failed (${res.status})`)
-        }
-        const { id } = await res.json()
-        if (id) ruleIdByPlatform.set(platform, id)
+      // primary first, then the other CONNECTED web providers (cheapest first) as fallback
+      const ordered = [provider, ...webProviders.filter((p) => p !== provider && connected.has(p))]
+      const methods = ordered.map((p) => providerInfo.get(p)?.method).filter(Boolean) as string[]
+      const res = await fetch("/api/routing-rules", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ platform: "any", priority_methods: methods, country_code: null, currency: null, product_type: null, priority: 10 }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j?.error ?? `save failed (${res.status})`)
       }
-      setSaved(platform)
-      setTimeout(() => setSaved((cur) => (cur === platform ? null : cur)), 2500)
+      const { id } = await res.json()
+      setRuleIds(id ? [id] : [])
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
     } catch (e: any) {
-      setError(`${platform}: ${e?.message ?? "save failed"}`)
+      setPrimary(prev)
+      setError(e?.message ?? "save failed")
     } finally {
-      setSaving(null)
+      setSaving(false)
     }
   }
 
-  const cheapestOptionLabel = cheapest
-    ? `Auto — cheapest: ${prettyProvider(cheapest)} · ${feeLabel(cheapest)}`
-    : "Auto (cheapest eligible)"
+  // fallback rank among connected web providers (primary excluded)
+  const fallbackOrder = webProviders.filter((p) => p !== primary && connected.has(p))
 
   return (
     <Card>
       <CardBody>
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-sm font-bold text-ink-900">Platform providers</h2>
-          <Badge>fees shown</Badge>
+          <h2 className="text-sm font-bold text-ink-900">Payment providers</h2>
+          {saved && <span className="text-xs font-semibold text-emerald-600">✓ updated</span>}
         </div>
         <p className="text-xs text-ink-500 mb-4 max-w-2xl">
-          Pick a provider to set it as the <strong>primary</strong> for that platform — it saves
-          instantly and you can change it anytime. Leave it on <strong>Auto</strong> to let the router
-          use the cheapest eligible provider. Fees are shown so you route to the connection that saves
-          the most. iOS and Android digital subscriptions use the native store automatically; Desktop
-          and Web are yours to route.
+          Pick your <strong>primary</strong> provider for web &amp; desktop checkout. Every other
+          connected provider becomes an automatic <strong>fallback</strong> (cheapest first) if the
+          primary can't serve a customer. iOS &amp; Android digital subscriptions always use the
+          native store per store policy.
         </p>
 
-        <div className="space-y-2.5">
-          {PLATFORMS.map((p) => {
-            const selected = selection[p.key] ?? "" // "" = cheapest/default
+        {/* Primary + fallback list */}
+        <div className="rounded-xl border border-ink-200 divide-y divide-ink-100">
+          {webProviders.map((p) => {
+            const isConnected = connected.has(p)
+            const isPrimary = primary === p
+            const fbIndex = fallbackOrder.indexOf(p)
             return (
-              <div key={p.key} className="grid grid-cols-[110px_1fr] items-center gap-3 py-2 border-t border-ink-100 first:border-t-0">
-                <span className="text-sm font-bold text-ink-900">{p.label}</span>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {p.native && (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-ink-700 bg-ink-50 border border-ink-200 rounded-md px-2 py-1">
-                        {p.native}
-                        <Badge>auto</Badge>
-                      </span>
-                    )}
-                    <select
-                      value={selected}
-                      disabled={saving === p.key || options.length === 0}
-                      onChange={(e) => save(p.key, e.target.value)}
-                      className="min-w-[220px] px-3 py-2 bg-ink-50 border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500 disabled:opacity-60"
-                      aria-label={`${p.label} provider`}
-                    >
-                      <option value="">{p.native ? `Web fallback — ${cheapestOptionLabel}` : cheapestOptionLabel}</option>
-                      {options.map((prov) => (
-                        <option key={prov} value={prov}>
-                          {prettyProvider(prov)} · {feeLabel(prov)}
-                        </option>
-                      ))}
-                    </select>
-                    {saving === p.key && <span className="text-xs text-ink-400">saving…</span>}
-                    {saved === p.key && <span className="text-xs font-semibold text-emerald-600">✓ updated</span>}
-                    {selected && saving !== p.key && saved !== p.key && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-brand-700 bg-brand-50 border border-brand-200 rounded px-1.5 py-0.5">Primary</span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-ink-400">{p.hint}</p>
-                </div>
-              </div>
+              <button
+                key={p}
+                type="button"
+                disabled={!isConnected || saving}
+                onClick={() => choosePrimary(p)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left disabled:cursor-not-allowed hover:bg-ink-50/60 disabled:hover:bg-transparent"
+              >
+                <span
+                  className={
+                    "w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 " +
+                    (isPrimary ? "border-brand-500 bg-brand-500" : "border-ink-300")
+                  }
+                >
+                  {isPrimary && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </span>
+                <span className="text-sm font-semibold text-ink-900 w-40">{pretty(p)}</span>
+                <span className="text-xs text-ink-500 w-16">{fee(p)}</span>
+                <span className="flex-1" />
+                {isConnected ? (
+                  isPrimary ? (
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-brand-700 bg-brand-50 border border-brand-200 rounded px-1.5 py-0.5">Primary</span>
+                  ) : primary && fbIndex >= 0 ? (
+                    <span className="text-[11px] text-ink-400">Fallback {fbIndex + 1}</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Connected
+                    </span>
+                  )
+                ) : (
+                  <Link
+                    href={CONNECT_HREF[p] ?? "/providers"}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-[11px] font-semibold text-brand-600 hover:text-brand-700"
+                  >
+                    Connect →
+                  </Link>
+                )}
+              </button>
             )
           })}
         </div>
+        {saving && <p className="text-xs text-ink-400 mt-2">saving…</p>}
+        {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
 
-        {options.length === 0 ? (
-          <p className="text-xs text-amber-600 mt-3">
-            Connect a payment provider (Stripe, Razorpay, …) below — then you can route Desktop/Web to it and compare fees.
-          </p>
-        ) : (
-          <p className="text-[11px] text-ink-400 mt-3">
-            Fees are the provider's domestic rate from the method registry — lower routes cheaper. Cross-border adds each provider's FX markup.
-          </p>
-        )}
-        {error && <p className="text-xs text-red-600 mt-3">{error}</p>}
+        {/* Native in-app billing (automatic) */}
+        <h3 className="text-[11px] font-bold uppercase tracking-wider text-ink-400 mt-6 mb-2">In-app billing (automatic)</h3>
+        <div className="rounded-xl border border-ink-200 divide-y divide-ink-100">
+          {NATIVE.map((n) => (
+            <div key={n.key} className="flex items-center gap-3 px-4 py-3">
+              <span className="text-sm font-semibold text-ink-900 w-40">{pretty(n.key)}</span>
+              <span className="text-[11px] text-ink-400">Auto on {n.on}</span>
+              <span className="flex-1" />
+              {connected.has(n.key) ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Connected
+                </span>
+              ) : (
+                <Link href={CONNECT_HREF[n.key] ?? "/providers"} className="text-[11px] font-semibold text-brand-600 hover:text-brand-700">
+                  Connect →
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-ink-400 mt-3">
+          Fees are the provider's domestic rate — lower routes cheaper. Cross-border adds each provider's FX markup.
+          Digital subscriptions on iOS/Android always use the native store (Apple 3.1.1 / Google Play policy).
+        </p>
       </CardBody>
     </Card>
   )
