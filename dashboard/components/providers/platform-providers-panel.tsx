@@ -75,6 +75,7 @@ export function PlatformProvidersPanel({
 
   const [selection, setSelection] = useState<Record<string, string>>(initial)
   const [saving, setSaving] = useState<string | null>(null)
+  const [saved, setSaved] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const feeLabel = (p: string) => {
@@ -106,6 +107,8 @@ export function PlatformProvidersPanel({
         const { id } = await res.json()
         if (id) ruleIdByPlatform.set(platform, id)
       }
+      setSaved(platform)
+      setTimeout(() => setSaved((cur) => (cur === platform ? null : cur)), 2500)
     } catch (e: any) {
       setError(`${platform}: ${e?.message ?? "save failed"}`)
     } finally {
@@ -114,8 +117,8 @@ export function PlatformProvidersPanel({
   }
 
   const cheapestOptionLabel = cheapest
-    ? `Cheapest: ${prettyProvider(cheapest)} · ${feeLabel(cheapest)}`
-    : "Default (cheapest eligible)"
+    ? `Auto — cheapest: ${prettyProvider(cheapest)} · ${feeLabel(cheapest)}`
+    : "Auto (cheapest eligible)"
 
   return (
     <Card>
@@ -125,9 +128,11 @@ export function PlatformProvidersPanel({
           <Badge>fees shown</Badge>
         </div>
         <p className="text-xs text-ink-500 mb-4 max-w-2xl">
-          Choose which provider each platform of your app uses — cheapest first, with each provider's
-          fee shown so you can route to the connection that saves the most. iOS and Android digital
-          subscriptions are handled by the native store automatically; Desktop and Web are yours to route.
+          Pick a provider to set it as the <strong>primary</strong> for that platform — it saves
+          instantly and you can change it anytime. Leave it on <strong>Auto</strong> to let the router
+          use the cheapest eligible provider. Fees are shown so you route to the connection that saves
+          the most. iOS and Android digital subscriptions use the native store automatically; Desktop
+          and Web are yours to route.
         </p>
 
         <div className="space-y-2.5">
@@ -159,6 +164,10 @@ export function PlatformProvidersPanel({
                       ))}
                     </select>
                     {saving === p.key && <span className="text-xs text-ink-400">saving…</span>}
+                    {saved === p.key && <span className="text-xs font-semibold text-emerald-600">✓ updated</span>}
+                    {selected && saving !== p.key && saved !== p.key && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-brand-700 bg-brand-50 border border-brand-200 rounded px-1.5 py-0.5">Primary</span>
+                    )}
                   </div>
                   <p className="text-[11px] text-ink-400">{p.hint}</p>
                 </div>
