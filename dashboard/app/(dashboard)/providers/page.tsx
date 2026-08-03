@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/page-header"
 import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { CountryPicker } from "@/components/providers/country-picker"
+import { PlatformProvidersPanel } from "@/components/providers/platform-providers-panel"
 import {
   recommendationsFor,
   SUPPORTED_COUNTRIES,
@@ -50,7 +51,7 @@ export default async function ProvidersPage({
   const { tenant } = await requireTenant()
   const supabase = createClient()
 
-  const [tenantRes, providersRes, paymentMethodsRes, stripeOauthRes, registryRes] =
+  const [tenantRes, providersRes, paymentMethodsRes, stripeOauthRes, registryRes, routingRes] =
     await Promise.all([
       supabase
         .from("tenants")
@@ -69,7 +70,9 @@ export default async function ProvidersPage({
         .maybeSingle(),
       supabase
         .from("provider_method_registry")
-        .select("method, fee_percent, supports_subscription, supports_one_time"),
+        .select("method, provider, display_name, fee_percent, supports_subscription, supports_one_time")
+        .order("fee_percent"),
+      supabase.rpc("tenant_routing_rules_list", { p_tenant_id: tenant.id }),
     ])
 
   const savedCountry = tenantRes.data?.country_code ?? null
@@ -219,6 +222,15 @@ export default async function ProvidersPage({
           />
         </div>
       </Section>
+
+      {/* Platform → provider selector (migration 075 routing engine, surfaced as a panel) */}
+      <div className="mb-8">
+        <PlatformProvidersPanel
+          registry={(registryRes.data ?? []) as any}
+          connectedProviders={[...tenantProviders]}
+          initialRules={(routingRes.data ?? []) as any}
+        />
+      </div>
 
       {/* Tier 1+2: Recommended for {country} */}
       {(byTier.primary.length > 0 || byTier.secondary.length > 0) && (
