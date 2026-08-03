@@ -139,6 +139,15 @@ export default async function ProvidersPage({
         }
       />
 
+      {/* Platform → provider selector (migration 075) — top of page for discoverability */}
+      <div className="mb-8">
+        <PlatformProvidersPanel
+          registry={(registryRes.data ?? []) as any}
+          connectedProviders={[...tenantProviders]}
+          initialRules={(routingRes.data ?? []) as any}
+        />
+      </div>
+
       {/* Onboarding nudge if no country chosen yet */}
       {!savedCountry && (
         <div className="mb-6 rounded-xl border border-warning-200 bg-warning-50 p-4 flex items-start gap-3">
@@ -222,15 +231,6 @@ export default async function ProvidersPage({
           />
         </div>
       </Section>
-
-      {/* Platform → provider selector (migration 075 routing engine, surfaced as a panel) */}
-      <div className="mb-8">
-        <PlatformProvidersPanel
-          registry={(registryRes.data ?? []) as any}
-          connectedProviders={[...tenantProviders]}
-          initialRules={(routingRes.data ?? []) as any}
-        />
-      </div>
 
       {/* Tier 1+2: Recommended for {country} */}
       {(byTier.primary.length > 0 || byTier.secondary.length > 0) && (
