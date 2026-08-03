@@ -36,7 +36,26 @@ const DISPLAY: Record<string, string> = {
   razorpay: "Razorpay",
   cashfree: "Cashfree",
   direct_upi: "UPI Direct",
+  google_play: "Google Play Billing",
+  app_store: "App Store (StoreKit 2)",
 }
+
+/** Every provider PayCraft supports — native store lanes + routable web providers. */
+const CATALOG: {
+  key: string
+  lane: "native" | "web"
+  on?: string
+  href: string
+  nativeFee?: string
+}[] = [
+  { key: "app_store", lane: "native", on: "iOS", href: "/providers/app-store", nativeFee: "15–30% store cut" },
+  { key: "google_play", lane: "native", on: "Android", href: "/providers/google-play", nativeFee: "15–30% store cut" },
+  { key: "stripe", lane: "web", href: "/providers/stripe" },
+  { key: "razorpay", lane: "web", href: "/providers/razorpay" },
+  { key: "cashfree", lane: "web", href: "/providers/cashfree" },
+  { key: "direct_upi", lane: "web", href: "/providers/upi" },
+]
+
 const PLATFORMS: { key: string; label: string; native?: string; nativeHref?: string }[] = [
   { key: "ios", label: "iOS", native: "App Store (StoreKit 2)", nativeHref: "/providers/app-store" },
   { key: "android", label: "Android", native: "Google Play Billing", nativeHref: "/providers/google-play" },
@@ -136,7 +155,72 @@ export function PlatformProvidersPanel({
 
   const noProviders = options.length === 0
 
+  // fee label for the catalog: web → registry %, native → store-cut range
+  const catalogFee = (c: (typeof CATALOG)[number]) => {
+    if (c.lane === "native") return c.nativeFee ?? ""
+    const f = providerInfo.get(c.key)?.fee
+    return f != null && f < 99 ? `${f}%` : "—"
+  }
+
   return (
+    <div className="space-y-4">
+      {/* ── Supported providers catalog (all providers + connection status) ── */}
+      <Card>
+        <CardBody>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-sm font-bold text-ink-900">Supported providers</h2>
+            <Badge>{options.length + CATALOG.filter((c) => c.lane === "native" && connected.has(c.key)).length} connected</Badge>
+          </div>
+          <p className="text-xs text-ink-500 mb-4 max-w-2xl">
+            Every provider PayCraft supports. Connect the ones you want, then choose a primary +
+            fallback per platform below. Fees are the provider's domestic rate — lower routes cheaper.
+          </p>
+          <div className="rounded-xl border border-ink-200 divide-y divide-ink-100">
+            <div className="hidden sm:grid grid-cols-[1fr_120px_140px_130px] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-ink-400">
+              <span>Provider</span>
+              <span>Lane</span>
+              <span>Fee</span>
+              <span>Status</span>
+            </div>
+            {CATALOG.map((c) => {
+              const isConnected = connected.has(c.key)
+              return (
+                <div key={c.key} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_140px_130px] gap-1 sm:gap-3 px-4 py-3 sm:items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-ink-900">{DISPLAY[c.key] ?? c.key}</span>
+                  </div>
+                  <div>
+                    {c.lane === "native" ? (
+                      <span className="text-[11px] font-medium text-ink-600">Native · {c.on}</span>
+                    ) : (
+                      <span className="text-[11px] font-medium text-ink-600">Web</span>
+                    )}
+                  </div>
+                  <div className="text-[13px] tabular-nums text-ink-700">{catalogFee(c)}</div>
+                  <div>
+                    {isConnected ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Connected
+                      </span>
+                    ) : (
+                      <Link href={c.href} className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-600 hover:text-brand-700">
+                        <span className="w-1.5 h-1.5 rounded-full bg-ink-300" /> Connect →
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-[11px] text-ink-400 mt-3">
+            Native stores (App Store / Google Play) are mandatory for iOS &amp; Android digital
+            subscriptions per store policy. Web providers route Desktop, Web, and the physical-goods
+            lane.
+          </p>
+        </CardBody>
+      </Card>
+
+      {/* ── Per-platform primary + fallback routing ── */}
     <Card>
       <CardBody>
         <div className="flex items-center justify-between mb-1">
@@ -218,6 +302,7 @@ export function PlatformProvidersPanel({
         </p>
       </CardBody>
     </Card>
+    </div>
   )
 }
 
