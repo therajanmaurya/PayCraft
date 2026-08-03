@@ -232,15 +232,6 @@ export default async function ProvidersPage({
         </div>
       </Section>
 
-      {/* Platform → provider selector (migration 075 routing engine, surfaced as a panel) */}
-      <div className="mb-8">
-        <PlatformProvidersPanel
-          registry={(registryRes.data ?? []) as any}
-          connectedProviders={[...tenantProviders]}
-          initialRules={(routingRes.data ?? []) as any}
-        />
-      </div>
-
       {/* Tier 1+2: Recommended for {country} */}
       {(byTier.primary.length > 0 || byTier.secondary.length > 0) && (
         <Section
