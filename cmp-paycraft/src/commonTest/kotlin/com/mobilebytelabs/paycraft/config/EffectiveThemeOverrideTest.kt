@@ -1,7 +1,7 @@
 package com.mobilebytelabs.paycraft.config
 
 import androidx.compose.ui.graphics.Color
-import com.mobilebytelabs.paycraft.presentation.parseHexColor
+import com.mobilebytelabs.paycraft.ui.theme.parseHexColor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

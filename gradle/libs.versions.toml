@@ -35,6 +35,10 @@ sqldelight = "2.1.0"
 # Google Play Billing Library v8 — native Android IAP client (Phase 3, D8/D13). v8 is required
 # for all new apps by 2026-08-31 (GOAL Risks); billing-ktx bundles the suspend query extensions.
 google-billing = "8.0.0"
+# Roborazzi — device-free Compose Desktop (Skiko) golden render for AC-15 (03-shimmer-productlist).
+# jvmTest ONLY (never commonTest — Skiko-desktop artifact leaks would break js/wasm/ios compile).
+# 1.67.0 is the proven baseline (memory: roborazzi-desktop-render-tier-recipe, 2026-08-06).
+roborazzi = "1.67.0"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -93,6 +97,13 @@ sqldelight-coroutines-extensions = { module = "app.cash.sqldelight:coroutines-ex
 # PlayBillingNativeClient (billing/NativeBillingClient.android.kt).
 google-billing-ktx = { module = "com.android.billingclient:billing-ktx", version.ref = "google-billing" }
 
+# Roborazzi Compose Desktop (Skiko) — device-free golden-render capture for AC-15. jvmTest ONLY.
+# `roborazzi-compose-desktop` carries captureRoboImage(SemanticsNodeInteraction, filePath, ...)
+# in package io.github.takahirom.roborazzi (RoborazziDesktopKt). The plain `roborazzi` AAR is
+# Android-only (no JVM variant); scanner-support is Android-only (we author explicit capture tests
+# so no scanner needed).
+roborazzi-compose-desktop = { module = "io.github.takahirom.roborazzi:roborazzi-compose-desktop", version.ref = "roborazzi" }
+
 [plugins]
 android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -103,3 +114,6 @@ composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "k
 vanniktech-mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "vanniktechMavenPublish" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+# Roborazzi Gradle plugin — generates record/verify tasks per target when applied to the module.
+# Applied to :cmp-paycraft only (jvm target consumes it via jvmTest deps); do not apply at root.
+roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }

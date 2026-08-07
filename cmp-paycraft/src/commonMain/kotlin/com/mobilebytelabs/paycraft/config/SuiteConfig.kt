@@ -1,5 +1,6 @@
 package com.mobilebytelabs.paycraft.config
 
+import com.mobilebytelabs.paycraft.core.MonetizationMode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -17,6 +18,16 @@ data class SuiteConfig(
     val providers: List<ProviderDto> = emptyList(),
     val paywall: PaywallDto = PaywallDto(),
     val locale: String = "US",
+    /**
+     * Monetization policy override (Phase-4 clean-SDK, AC-9). When present, wins over
+     * the host-supplied init-time [MonetizationMode] via
+     * [com.mobilebytelabs.paycraft.core.MonetizationModeResolver] so a dashboard flip
+     * propagates without a host rebuild — same precedence as the theme pipeline.
+     * `null` (default when the cloud response omits the field) leaves the init flag
+     * in charge. Wire format: `"ad_supported"` / `"trial_managed"` (see
+     * [MonetizationMode]'s @SerialName annotations).
+     */
+    val mode: MonetizationMode? = null,
     /**
      * The buyer country the PayCraft cloud resolved from the request's edge IP-country header
      * (`x-vercel-ip-country` / `cf-ipcountry` / `cloudfront-viewer-country`). ISO 3166-1 alpha-2,
@@ -184,7 +195,8 @@ data class PaywallDto(
 )
 
 /**
- * Effective theme-override map consumed by `PayCraftThemeProvider(themeOverride = …)`.
+ * Effective theme-override map consumed by the unified `PayCraftThemeProvider(config = …)`
+ * via `SuiteConfig.themeOverride` → `BrandedPalette` in `ui/theme/PayCraftColors.kt`.
  *
  * Merges the legacy [PaywallDto.themeJsonb] map with the dedicated [PaywallDto.primaryColor]
  * column. The dashboard Paywall designer writes the brand color into `primary_color`

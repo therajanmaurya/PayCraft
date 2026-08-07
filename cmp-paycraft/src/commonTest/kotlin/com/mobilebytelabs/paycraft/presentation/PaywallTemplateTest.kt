@@ -2,6 +2,8 @@ package com.mobilebytelabs.paycraft.presentation
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.runComposeUiTest
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
@@ -14,6 +16,7 @@ import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.model.SubscriptionStatus
 import com.mobilebytelabs.paycraft.model.TrialInfo
 import com.mobilebytelabs.paycraft.model.VerificationMethod
+import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
 import kotlin.test.Test
 
 /**
@@ -79,7 +82,7 @@ class PaywallTemplateTest {
 
     // MINIMAL — 6 states
 
-    @Test fun minimal_loading() = renderAndAssert(PaywallTemplate.MINIMAL, BillingState.Loading, "Loading")
+    @Test fun minimal_loading() = renderAndAssertLoadingSkeleton(PaywallTemplate.MINIMAL)
 
     @Test fun minimal_free() = renderAndAssert(PaywallTemplate.MINIMAL, BillingState.Free, "Upgrade to Premium")
 
@@ -97,7 +100,7 @@ class PaywallTemplateTest {
 
     // PREMIUM — 6 states
 
-    @Test fun premium_loading() = renderAndAssert(PaywallTemplate.PREMIUM, BillingState.Loading, "Loading")
+    @Test fun premium_loading() = renderAndAssertLoadingSkeleton(PaywallTemplate.PREMIUM)
 
     @Test fun premium_free() = renderAndAssert(PaywallTemplate.PREMIUM, BillingState.Free, "Upgrade to Premium")
 
@@ -119,7 +122,7 @@ class PaywallTemplateTest {
 
     // DARK — 6 states
 
-    @Test fun dark_loading() = renderAndAssert(PaywallTemplate.DARK, BillingState.Loading, "Loading")
+    @Test fun dark_loading() = renderAndAssertLoadingSkeleton(PaywallTemplate.DARK)
 
     @Test fun dark_free() = renderAndAssert(PaywallTemplate.DARK, BillingState.Free, "Upgrade to Premium")
 
@@ -134,10 +137,14 @@ class PaywallTemplateTest {
     // BRANDED_STACK — 6 billing states (AC-5 parity with legacy templates)
 
     /**
-     * BrandedStackLoading renders a "Loading subscription status…" text node and a
-     * circular progress indicator. The marker "Loading" is unique to this state branch.
+     * Phase 3 (AC-5, AC-14): the Loading branch renders a layout-matched
+     * [com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton] tagged
+     * [PayCraftTestTags.PAYWALL_SHIMMER] instead of a CircularProgressIndicator +
+     * "Loading" text node. The skeleton root has the tag and the SDK's other
+     * Loading branches (banner, deprecated templates) delegate to the same
+     * shared skeleton, so a single testTag assertion covers the whole SDK.
      */
-    @Test fun branded_stack_loading() = renderAndAssert(PaywallTemplate.BRANDED_STACK, BillingState.Loading, "Loading")
+    @Test fun branded_stack_loading() = renderAndAssertLoadingSkeleton(PaywallTemplate.BRANDED_STACK)
 
     /**
      * BrandedStackFree uses the default [PaywallDto.heroTitle] ("Upgrade to Premium")
@@ -256,9 +263,11 @@ class PaywallTemplateTest {
     }
 
     /**
-     * When [PaywallDto.popularPlanSku] matches one of the products the plan card
-     * for that SKU shows the "MOST POPULAR" badge (rendered by [PlanCard] when
-     * `popular = true`). A non-matching SKU must NOT show the badge.
+     * Phase 3 (AC-7): when [PaywallDto.popularPlanSku] matches a plan, the
+     * BrandedStackFree body renders that plan inside the [ProductList] surface
+     * wrapped in a `PRODUCT_LIST_RECOMMENDED`-tagged outer Box (assert-once
+     * `singleOrNull` semantics). The recommended plan's display name still
+     * renders inside its card.
      */
     @Test fun branded_stack_free_popular_plan_badge_renders() = runComposeUiTest {
         val configWithPopular = SuiteConfig(
@@ -275,9 +284,12 @@ class PaywallTemplateTest {
                 )
             }
         }
-        // PlanCard emits "MOST POPULAR" text only for the popular plan
-        onNodeWithText("MOST POPULAR", substring = false).assertExists()
-        // The popular plan's display name still renders inside its card
+        val recommended = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_RECOMMENDED)
+            .fetchSemanticsNodes()
+        check(recommended.size == 1) {
+            "expected exactly one recommended plan wrap (Phase 3 AC-7 assert-once), got ${recommended.size}"
+        }
+        // The popular plan's display name still renders inside its card.
         onNodeWithText("Monthly", substring = false).assertExists()
     }
 
@@ -343,6 +355,34 @@ class PaywallTemplateTest {
                 )
             }
             onNodeWithText(markerText, substring = true).assertExists()
+        }
+    }
+
+    /**
+     * Loading-branch assertion helper — asserts the shared PayCraftShimmer skeleton
+     * is present (Phase 3 AC-5) and NO CircularProgressIndicator is rendered. Every
+     * template's Loading branch delegates to `PaywallSkeleton` under
+     * [PayCraftTestTags.PAYWALL_SHIMMER], so the same assertion covers all four
+     * templates uniformly.
+     */
+    private fun renderAndAssertLoadingSkeleton(template: PaywallTemplate) {
+        runComposeUiTest {
+            setContent {
+                template.render(
+                    state = BillingState.Loading,
+                    products = sampleProducts,
+                    onPickProduct = {},
+                    onRetry = {},
+                )
+            }
+            onNodeWithTag(PayCraftTestTags.PAYWALL_SHIMMER).assertExists()
+            // At least one plan-item shimmer must render (count parity with product list — AC-6).
+            val itemCount = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_ITEM_SHIMMER)
+                .fetchSemanticsNodes()
+                .size
+            check(itemCount >= 1) {
+                "Expected at least one product_list_item_shimmer placeholder, got $itemCount"
+            }
         }
     }
 }

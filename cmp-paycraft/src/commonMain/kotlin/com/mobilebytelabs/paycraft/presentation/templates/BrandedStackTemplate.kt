@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,7 +21,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,8 +37,9 @@ import com.mobilebytelabs.paycraft.config.PaywallDto
 import com.mobilebytelabs.paycraft.config.ValuePropTriple
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
-import com.mobilebytelabs.paycraft.presentation.components.PlanCard
+import com.mobilebytelabs.paycraft.ui.ProductList
 import com.mobilebytelabs.paycraft.ui.components.rememberHeroIconOverride
+import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
 
 /**
@@ -120,52 +119,24 @@ private fun BrandedStackFree(products: List<Product>, onPickProduct: (Product) -
             ValuePropList(items = paywall.valueProps)
         }
         Spacer(Modifier.height(8.dp))
-        products
-            .sortedBy { it.displayOrder }
-            .forEach { product ->
-                PlanCard(
-                    product = product,
-                    onClick = { onPickProduct(product) },
-                    popular = product.sku == paywall.popularPlanSku,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        Spacer(Modifier.height(8.dp))
-        BrandedStackContinueButton(products, onPickProduct, paywall)
+        // Phase 3 (AC-7): the plans stack + dominant CTA are delegated to the
+        // first-class [ProductList] surface, so Phase 4's presentPaywallIfNeeded()
+        // auto-present has an addressable product-list contract instead of a
+        // nested PlanSelector — one recommended-ring, annual savings badge,
+        // trial badge + microcopy, single dominant CTA all resolved inside
+        // ProductList. This is the sole live invocation site
+        // (RULE-IMPL-DEAD-CLICKABLE-001).
+        ProductList(
+            products = products,
+            onPurchase = { sku ->
+                val picked = products.firstOrNull { it.sku == sku } ?: return@ProductList
+                onPickProduct(picked)
+            },
+            recommendedSku = paywall.popularPlanSku,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.height(8.dp))
         PaywallMicroFooter(paywall = paywall)
-    }
-}
-
-@Composable
-private fun BrandedStackContinueButton(
-    products: List<Product>,
-    onPickProduct: (Product) -> Unit,
-    paywall: PaywallDto,
-) {
-    val tokens = PayCraftTheme
-    val defaultProduct = products
-        .firstOrNull { it.sku == paywall.popularPlanSku }
-        ?: products.firstOrNull()
-
-    Button(
-        onClick = { defaultProduct?.let(onPickProduct) },
-        enabled = defaultProduct != null,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(52.dp),
-        shape = RoundedCornerShape(26.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = tokens.colors.accent,
-            contentColor = tokens.colors.onAccent,
-        ),
-        contentPadding = PaddingValues(horizontal = 24.dp),
-    ) {
-        Text(
-            text = paywall.ctaContinue,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 
@@ -250,13 +221,14 @@ private fun BrandingFooterLine(branding: String, customFooter: String?) {
 
 @Composable
 private fun BrandedStackLoading() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(color = PayCraftTheme.colors.accent)
-            Spacer(Modifier.height(12.dp))
-            Text("Loading subscription status…", color = PayCraftTheme.colors.onSurfaceVariant)
-        }
-    }
+    // Phase 3 (AC-5, AC-14): the Loading branch renders a layout-matched
+    // [PaywallSkeleton] instead of a centered progress indicator. The skeleton
+    // mirrors the loaded BrandedStackFree layout one-to-one (hero → subtitle
+    // → plans grid → CTA) so Content composes without a visible layout shift
+    // once the cloud config resolves. Reduced-motion collapses every child to
+    // a static background (AC-14). Cold-cache paywall opens see this once;
+    // warm-cache opens (prefetch on init, AC-8) skip it.
+    PaywallSkeleton(planCount = 3)
 }
 
 @Composable

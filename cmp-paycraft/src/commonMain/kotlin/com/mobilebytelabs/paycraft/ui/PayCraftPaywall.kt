@@ -1,87 +1,49 @@
 package com.mobilebytelabs.paycraft.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.mobilebytelabs.paycraft.PayCraft
-import com.mobilebytelabs.paycraft.PayCraftPlatform
-import com.mobilebytelabs.paycraft.config.effectiveThemeOverride
-import com.mobilebytelabs.paycraft.generated.resources.Res
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_choose_plan
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_contact_support_email
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_continue_cta
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_error_description
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_error_retry
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_error_title
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_upgrade_plan
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_upgrade_title
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_your_premium_title
-import com.mobilebytelabs.paycraft.model.BillingState
-import com.mobilebytelabs.paycraft.presentation.Branding
-import com.mobilebytelabs.paycraft.presentation.PayCraftThemeProvider
-import com.mobilebytelabs.paycraft.presentation.ProviderBottomSheet
-import com.mobilebytelabs.paycraft.presentation.components.BrandingFooter
-import com.mobilebytelabs.paycraft.presentation.templates.ValuePropList
-import com.mobilebytelabs.paycraft.provider.StripeProvider
-import com.mobilebytelabs.paycraft.ui.components.PayCraftActiveSubscriptionBanner
-import com.mobilebytelabs.paycraft.ui.components.PayCraftPaywallHeader
-import com.mobilebytelabs.paycraft.ui.components.PaywallLegalFooter
-import com.mobilebytelabs.paycraft.ui.components.PlanSelector
-import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
- * PayCraft paywall.
+ * PayCraft paywall — the SINGLE public entry point for the SDK's paywall UI
+ * (Phase-2 clean-SDK consolidation, AC-4).
  *
  * Renders either a [DisplayMode.FullScreen] paywall (default) or a compact
  * [DisplayMode.Banner] status strip — both observe the same [PayCraftPaywallViewModel]
  * and react to the same `BillingState`. Hosts pick the shape that fits the surface
  * they're rendering on.
  *
+ * Every render path lives inside [PayCraftPaywallComposable] — the v2 cloud-template
+ * pipeline that resolves [com.mobilebytelabs.paycraft.presentation.PaywallTemplate]
+ * (BrandedStackTemplate by default) and renders every
+ * [com.mobilebytelabs.paycraft.model.BillingState] branch. The retired v1
+ * `v1 hand-built content branch` hand-built `when`-over-`BillingState` is DELETED — its
+ * behaviour is fully absorbed into [PayCraftPaywallComposable] plus the
+ * `BrandedStackTemplate`'s `DeviceConflict` / `OwnershipVerified` branches so no
+ * user-visible state is dropped.
+ *
+ * Phase 3 (AC-5, AC-14): every `BillingState.Loading` branch in the single paywall
+ * path now renders a layout-matched
+ * [com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton] instead of
+ * a centered progress indicator — the skeleton mirrors the loaded template layout
+ * one-to-one (hero + subtitle + plans grid + CTA), animates through
+ * [com.mobilebytelabs.paycraft.ui.components.shimmer.Modifier.shimmerWave], and
+ * degrades to a static background under OS reduce-motion. The Content branch
+ * delegates to [ProductList] for its plans surface (AC-7). Warm-cache paywalls
+ * skip the skeleton entirely because [com.mobilebytelabs.paycraft.PayCraft.initialize]
+ * prefetches products fire-and-forget (AC-8).
+ *
  * Banner-mode callers should treat [onDismiss] as "user tapped the banner" — typically
  * a signal to show the full-screen paywall in a sheet or dialog.
+ *
+ * @param onDismiss   Invoked when the paywall dismisses (close button, viewmodel event,
+ *                    banner tap). Hosts wire this to close their sheet/dialog wrapper.
+ * @param modifier    Optional modifier applied to the root surface.
+ * @param displayMode [DisplayMode.FullScreen] (default) or [DisplayMode.Banner].
+ * @param viewModel   ViewModel — Koin-injected by default so consumers rarely pass one.
  */
 @Composable
 fun PayCraftPaywall(
@@ -90,52 +52,24 @@ fun PayCraftPaywall(
     displayMode: DisplayMode = DisplayMode.FullScreen,
     viewModel: PayCraftPaywallViewModel = koinViewModel(),
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
-
-    LaunchedEffect(viewModel.events) {
-        viewModel.events.collect { event ->
-            when (event) {
-                is PayCraftPaywallEvent.Dismissed -> onDismiss()
-                is PayCraftPaywallEvent.ErrorOccurred -> snackbarHostState.showSnackbar(event.message)
-                else -> {}
-            }
-        }
-    }
-
-    // Apply the dashboard-configured brand color (primary_color) + theme_jsonb to the
-    // paywall's MaterialTheme so prices, the selection ring, and the MOST POPULAR pill
-    // all render in the configured brand color instead of inheriting the host app's
-    // MaterialTheme primary (e.g. reels-downloader's blue). Collected reactively so a
-    // dashboard edit recolors the live paywall without a cold relaunch.
-    val themeOverride = PayCraft.suiteConfigFlow.collectAsState().value
-        ?.paywall?.effectiveThemeOverride.orEmpty()
-    PayCraftThemeProvider(themeOverride = themeOverride) {
-        when (displayMode) {
-            DisplayMode.Banner -> BannerPaywall(
-                state = state.billingState,
-                onTap = {
-                    // Surface the latest state when the user taps an error banner; hosts
-                    // wire onDismiss to open the full paywall sheet.
-                    if (state.billingState is BillingState.Error) {
-                        viewModel.dispatch(PayCraftPaywallAction.RefreshStatus)
-                    }
-                    onDismiss()
-                },
-                modifier = modifier,
-            )
-            DisplayMode.FullScreen -> PayCraftPaywallContent(
-                state = state,
-                snackbarHostState = snackbarHostState,
-                onAction = viewModel::dispatch,
-                modifier = modifier,
-            )
-        }
-    }
+    // Removed: v1 hand-built content branch(state = …, onDismiss = …, …) hand-built branch.
+    // Single paywall path — PayCraftPaywallComposable resolves BrandedStackTemplate.
+    PayCraftPaywallComposable(
+        onDismiss = onDismiss,
+        displayMode = displayMode,
+        modifier = modifier,
+        viewModel = viewModel,
+    )
 }
 
 /**
- * Bottom-sheet variant of the paywall. T18: dragHandle = null + refreshStatus on close.
+ * Bottom-sheet variant of the paywall. Preserves the retired v1 behaviour:
+ * `dragHandle = null` (no drag chrome) and [PayCraftPaywallAction.RefreshStatus]
+ * on the sheet's `onDismissRequest` so a subscription state stale at open time
+ * gets re-checked when the user closes without purchasing.
+ *
+ * Internally delegates to [PayCraftPaywallComposable] — the single paywall path —
+ * so the sheet renders through the same v2 template pipeline as [PayCraftPaywall].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -145,461 +79,23 @@ fun PayCraftPaywallSheet(
     viewModel: PayCraftPaywallViewModel = koinViewModel(),
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val state by viewModel.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(viewModel.events) {
-        viewModel.events.collect { event ->
-            when (event) {
-                is PayCraftPaywallEvent.Dismissed -> onDismiss()
-                else -> {}
-            }
-        }
-    }
-
-    // Brand-color the sheet (see PayCraftPaywall for rationale); reactive to dashboard edits.
-    val themeOverride = PayCraft.suiteConfigFlow.collectAsState().value
-        ?.paywall?.effectiveThemeOverride.orEmpty()
-    PayCraftThemeProvider(themeOverride = themeOverride) {
-        ModalBottomSheet(
-            onDismissRequest = {
-                // T18: refreshStatus when paywall closes
-                viewModel.dispatch(PayCraftPaywallAction.RefreshStatus)
-                onDismiss()
-            },
-            sheetState = sheetState,
-            dragHandle = null, // T18: no drag handle
-            modifier = modifier,
-        ) {
-            PayCraftPaywallContent(
-                state = state,
-                snackbarHostState = remember { SnackbarHostState() },
-                onAction = viewModel::dispatch,
-            )
-        }
-    }
-}
-
-/**
- * Stateless paywall content. T27: contentWindowInsets + containerColor. T28: Column + verticalScroll.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun PayCraftPaywallContent(
-    state: PayCraftPaywallState,
-    snackbarHostState: SnackbarHostState,
-    onAction: (PayCraftPaywallAction) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Scaffold(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag(PayCraftTestTags.PAYWALL_SCREEN),
-        // T27: zero insets so sheet handles insets itself
-        contentWindowInsets = WindowInsets(0.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (state.isPremium) {
-                            stringResource(Res.string.paycraft_your_premium_title)
-                        } else {
-                            stringResource(Res.string.paycraft_upgrade_title)
-                        },
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                actions = {
-                    IconButton(
-                        onClick = { onAction(PayCraftPaywallAction.Dismiss) },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag(PayCraftTestTags.DISMISS_BUTTON)
-                            .semantics { contentDescription = "Close paywall" },
-                    ) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = null)
-                    }
-                },
-            )
+    ModalBottomSheet(
+        onDismissRequest = {
+            // Preserved from v1: force a status refresh on close so a stale subscription
+            // state (e.g. purchase completed in the browser tab) is re-fetched before
+            // the host observes billingState next.
+            viewModel.dispatch(PayCraftPaywallAction.RefreshStatus)
+            onDismiss()
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { innerPadding ->
-        val isTestMode = (PayCraft.config?.provider as? StripeProvider)?.isTestMode == true
-        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            if (isTestMode) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFFFF6F00))
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "⚙ TEST MODE — sandbox only, no real charges",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-            when (val billingState = state.billingState) {
-                is BillingState.Loading -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding()
-                            .testTag(PayCraftTestTags.LOADING_INDICATOR),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .semantics { contentDescription = "Loading billing information" },
-                        )
-                    }
-                }
-
-                // T32: Full-screen error UI with retry
-                is BillingState.Error -> {
-                    PaywallErrorScreen(
-                        message = billingState.message,
-                        onRetry = { onAction(PayCraftPaywallAction.RefreshStatus) },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding()
-                            .padding(horizontal = 24.dp),
-                    )
-                }
-
-                // T10: Premium state with active banner + upgrade plan grid
-                is BillingState.Premium -> {
-                    val currentPlanName = state.plans.firstOrNull {
-                        it.rank == state.currentPlanRank
-                    }?.name
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 16.dp)
-                            .testTag(PayCraftTestTags.PREMIUM_STATUS_SCREEN),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        // T8: Active subscription banner component
-                        PayCraftActiveSubscriptionBanner(
-                            status = billingState.status,
-                            currentPlanName = currentPlanName,
-                        )
-
-                        HorizontalDivider()
-
-                        // Plan grid for upgrades
-                        if (state.plans.isNotEmpty()) {
-                            Text(
-                                text = stringResource(Res.string.paycraft_choose_plan),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            PlanSelector(
-                                plans = state.plans,
-                                selectedPlan = state.selectedPlan,
-                                currentPlanRank = state.currentPlanRank,
-                                onPlanSelected = { onAction(PayCraftPaywallAction.SelectPlan(it)) },
-                                isPremium = true,
-                                isTrialEligible = state.isTrialEligible,
-                            )
-                        }
-
-                        // Support info BEFORE CTA
-                        if (state.supportEmail.isNotBlank()) {
-                            SupportInfo(
-                                supportEmail = state.supportEmail,
-                                onContactSupport = { onAction(PayCraftPaywallAction.ContactSupport) },
-                            )
-                        }
-
-                        // Upgrade CTA
-                        val canUpgrade = state.selectedPlan?.let {
-                            state.canUpgrade(it) && !state.isPlanActive(it)
-                        } ?: false
-                        if (canUpgrade) {
-                            Button(
-                                onClick = { onAction(PayCraftPaywallAction.Subscribe) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(56.dp)
-                                    .testTag(PayCraftTestTags.SUBSCRIBE_BUTTON),
-                                enabled = !state.isSubmitting && state.selectedPlan != null,
-                            ) {
-                                if (state.isSubmitting) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                    )
-                                } else {
-                                    Text(
-                                        text = stringResource(Res.string.paycraft_upgrade_plan),
-                                        style = MaterialTheme.typography.labelLarge,
-                                    )
-                                }
-                            }
-                        }
-
-                        // Branding footer — auto-hides when branding = None (Pro+ tier)
-                        val paywallDto = PayCraft.suiteConfigFlow.collectAsState().value?.paywall
-                        BrandingFooter(
-                            branding = Branding.parse(paywallDto?.branding ?: "attribution"),
-                            customFooterText = paywallDto?.customFooter,
-                        )
-                    }
-                }
-
-                // T9: Free state with header, benefits, plan grid, CTA
-                is BillingState.Free -> {
-                    // Designer-mockup layout: hero header (icon + title + subtitle),
-                    // plan cards, "Continue" CTA, PRIVACY · TERMS · RESTORE row.
-                    //
-                    // Subtitle source order:
-                    //   1. PaywallDto.themeJsonb["headline_subtitle"] — set by
-                    //      tenants on the dashboard's Paywall designer.
-                    //   2. null (header omits the subtitle row gracefully).
-                    // Reactive live config — recomposes when the cloud fetch (or
-                    // refreshConfig()) publishes a dashboard edit. Hero title + subtitle
-                    // are dashboard-driven (v2 PaywallDto); fall back to the i18n string
-                    // / legacy themeJsonb only when the config field is blank/unloaded.
-                    val livePaywall = PayCraft.suiteConfigFlow.collectAsState().value?.paywall
-                    val paywallSubtitle = livePaywall?.heroSubtitle?.takeIf { it.isNotBlank() }
-                        ?: livePaywall?.themeJsonb?.get("headline_subtitle")?.takeIf { it.isNotBlank() }
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 16.dp)
-                            .testTag(PayCraftTestTags.PAYWALL_CONTENT),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                    ) {
-                        PayCraftPaywallHeader(
-                            title = livePaywall?.heroTitle?.takeIf { it.isNotBlank() }
-                                ?: stringResource(Res.string.paycraft_upgrade_title),
-                            subtitle = paywallSubtitle,
-                            // Dashboard branding-icon override (inline SVG path) — falls back
-                            // to the SDK default play icon when the tenant hasn't set one.
-                            heroIconSvg = livePaywall?.heroIconSvg,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        )
-
-                        // Dashboard-authored value props (PaywallDto.value_props). Same
-                        // component the BrandedStackTemplate uses, so the consumer paywall
-                        // and the designer render value props identically.
-                        val valueProps = livePaywall?.valueProps.orEmpty()
-                        if (valueProps.isNotEmpty()) {
-                            ValuePropList(items = valueProps)
-                        }
-
-                        // Plans — designer-style cards with center-top MOST POPULAR pill.
-                        if (state.plans.isNotEmpty()) {
-                            PlanSelector(
-                                plans = state.plans,
-                                selectedPlan = state.selectedPlan,
-                                currentPlanRank = 0,
-                                onPlanSelected = { onAction(PayCraftPaywallAction.SelectPlan(it)) },
-                                isPremium = false,
-                                isTrialEligible = state.isTrialEligible,
-                            )
-                        }
-
-                        // Continue CTA — 56dp, primary color.
-                        Button(
-                            onClick = { onAction(PayCraftPaywallAction.Subscribe) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                                .testTag(PayCraftTestTags.SUBSCRIBE_BUTTON)
-                                .semantics {
-                                    contentDescription = state.selectedPlan?.let {
-                                        "Continue with ${it.name} for ${it.price} per ${it.interval}"
-                                    } ?: "Continue"
-                                },
-                            enabled = !state.isSubmitting && state.selectedPlan != null,
-                        ) {
-                            if (state.isSubmitting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                )
-                            } else {
-                                Text(
-                                    text = stringResource(Res.string.paycraft_continue_cta),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                            }
-                        }
-
-                        // PRIVACY · TERMS · RESTORE legal footer.
-                        // Privacy + Terms open hosted URLs from the cloud paywall
-                        // config (themeJsonb.privacy_url / .terms_url); fall back to
-                        // PayCraft Cloud's defaults if the tenant hasn't customised.
-                        PaywallLegalFooter(
-                            restoreLabel = livePaywall?.restoreLabel,
-                            onPrivacyClick = {
-                                val paywallDto = PayCraft.suiteConfig?.paywall
-                                // Prefer the dedicated privacy_url column; fall back to the
-                                // legacy theme_jsonb key, then PayCraft Cloud's default.
-                                val url = paywallDto?.privacyUrl?.takeIf { it.isNotBlank() }
-                                    ?: paywallDto?.themeJsonb?.get("privacy_url")
-                                    ?: "https://paycraft.mobilebytesensei.com/privacy"
-                                PayCraftPlatform.openUrl(url)
-                            },
-                            onTermsClick = {
-                                val paywallDto = PayCraft.suiteConfig?.paywall
-                                val url = paywallDto?.termsUrl?.takeIf { it.isNotBlank() }
-                                    ?: paywallDto?.themeJsonb?.get("terms_url")
-                                    ?: "https://paycraft.mobilebytesensei.com/terms"
-                                PayCraftPlatform.openUrl(url)
-                            },
-                            onRestoreClick = {
-                                // For users without a logged-in email (the typical
-                                // legal-footer RESTORE click), open the SDK's modal
-                                // restore sheet. The sheet prompts for email + OAuth
-                                // and dispatches RestoreSubscription itself. If the
-                                // user IS already logged in, skip straight to the
-                                // restore action with the known email.
-                                if (state.userEmail.isNullOrBlank()) {
-                                    onAction(PayCraftPaywallAction.OpenRestoreSheet)
-                                } else {
-                                    onAction(
-                                        PayCraftPaywallAction.RestoreSubscription(
-                                            email = state.userEmail,
-                                        ),
-                                    )
-                                }
-                            },
-                        )
-
-                        // Branding footer — "Powered by PayCraft by MobileByteSensei"
-                        // (auto-hides when the tenant is on a Pro+ plan that selected
-                        // branding = none / custom_footer). Shown across every paywall
-                        // state, not just Free, so the SaaS attribution stays
-                        // consistent regardless of the user's billing status.
-                        val paywallDto = PayCraft.suiteConfigFlow.collectAsState().value?.paywall
-                        BrandingFooter(
-                            branding = Branding.parse(paywallDto?.branding ?: "attribution"),
-                            customFooterText = paywallDto?.customFooter,
-                        )
-                    }
-                }
-
-                is BillingState.DeviceConflict -> {
-                    // Device conflict is handled by the host screen (SettingsScreen).
-                    // The paywall shows a loading indicator while the conflict sheet is open.
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(48.dp))
-                    }
-                }
-
-                is BillingState.OwnershipVerified -> {
-                    // Ownership verified — host screen handles the transfer confirmation dialog.
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(48.dp))
-                    }
-                }
-            } // end when(billingState)
-        } // end Column wrapper
-    }
-
-    // Provider-picker bottom sheet — floats above the Scaffold via Dialog layer
-    val sheetTarget = state.providerSheetTarget
-    if (sheetTarget != null) {
-        ProviderBottomSheet(
-            providers = state.suiteProviders,
-            selectedPlan = sheetTarget,
-            maxVisible = 4,
-            onProviderPicked = { provider ->
-                onAction(PayCraftPaywallAction.CheckoutWithProvider(sheetTarget, provider))
-            },
-            onDismiss = { onAction(PayCraftPaywallAction.DismissProviderSheet) },
-        )
-    }
-
-    // Restore-purchases modal sheet — triggered by the legal-footer RESTORE
-    // link when the user isn't logged in. Hosts the SDK's PayCraftRestore
-    // composable (email input + Google/Apple OAuth + status feedback).
-    // OAuth handlers stay null at the SDK layer — consumer apps wire them
-    // via PayCraftPaywallSheet/PayCraftPaywall overloads when they support
-    // native sign-in flows.
-    PayCraftRestore(
-        visible = state.isRestoreSheetVisible,
-        onDismiss = { onAction(PayCraftPaywallAction.CloseRestoreSheet) },
-    )
-}
-
-// T32: Full-screen error UI
-@Composable
-private fun PaywallErrorScreen(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
-    Column(
+        sheetState = sheetState,
+        dragHandle = null,
         modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = stringResource(Res.string.paycraft_error_title),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = message.ifBlank { stringResource(Res.string.paycraft_error_description) },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(
-            onClick = onRetry,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .testTag(PayCraftTestTags.ERROR_MESSAGE),
-        ) {
-            Text(stringResource(Res.string.paycraft_error_retry))
-        }
-    }
-}
-
-@Composable
-private fun SupportInfo(supportEmail: String, onContactSupport: () -> Unit, modifier: Modifier = Modifier) {
-    TextButton(
-        onClick = onContactSupport,
-        modifier = modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .testTag(PayCraftTestTags.CONTACT_SUPPORT_BUTTON)
-            .semantics { contentDescription = "Contact support at $supportEmail" },
-    ) {
-        Text(
-            text = stringResource(Res.string.paycraft_contact_support_email, supportEmail),
-            style = MaterialTheme.typography.labelSmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        PayCraftPaywallComposable(
+            onDismiss = onDismiss,
+            displayMode = DisplayMode.FullScreen,
+            viewModel = viewModel,
         )
     }
 }

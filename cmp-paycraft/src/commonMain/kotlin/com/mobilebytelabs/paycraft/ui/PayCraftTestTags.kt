@@ -55,4 +55,36 @@ object PayCraftTestTags {
     // Banner paywall (DisplayMode.Banner)
     const val BANNER_PAYWALL = "paycraft_banner_paywall"
     const val BANNER_LABEL = "paycraft_banner_label"
+
+    // Phase 3 — Shimmer skeleton system (AC-5, AC-6, AC-14)
+    /** Root tag on the paywall Loading-branch skeleton (PaywallSkeleton). */
+    const val PAYWALL_SHIMMER = "paywall_shimmer"
+
+    /** Root tag on the product-list Loading-branch skeleton (ProductListSkeleton). */
+    const val PRODUCT_LIST_SHIMMER = "product_list_shimmer"
+
+    /** Per-placeholder tag on each item inside ProductListSkeleton — count matches loaded items. */
+    const val PRODUCT_LIST_ITEM_SHIMMER = "product_list_item_shimmer"
+
+    /** Root tag on the compact banner Loading-branch shimmer strip. */
+    const val BANNER_SHIMMER = "banner_shimmer"
+
+    // Phase 3 — Product-list surface (AC-7)
+    /** Root tag on the ProductList composable — the first-class plans surface. */
+    const val PRODUCT_LIST = "product_list"
+
+    /** Per-item tag on each product row inside ProductList. */
+    const val PRODUCT_LIST_ITEM = "product_list_item"
+
+    /** Tag on the trial-eligibility badge + microcopy shown above the CTA. */
+    const val TRIAL_BADGE = "trial_badge"
+
+    /** Tag on the single dominant paywall CTA button (ProductList.Continue). */
+    const val PAYWALL_CTA = "paywall_cta"
+
+    /** Tag on the "recommended" ring highlight — asserts exactly one recommended plan (AC-7). */
+    const val PRODUCT_LIST_RECOMMENDED = "product_list_recommended"
+
+    /** Tag on the annual-plan savings badge ("Save X%" vs monthly baseline). */
+    const val SAVINGS_BADGE = "savings_badge"
 }

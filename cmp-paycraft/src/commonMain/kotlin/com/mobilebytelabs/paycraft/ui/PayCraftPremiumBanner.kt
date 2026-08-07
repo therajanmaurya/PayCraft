@@ -34,8 +34,8 @@ import androidx.compose.ui.unit.sp
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
 import com.mobilebytelabs.paycraft.PayCraft
 import com.mobilebytelabs.paycraft.config.PaywallDto
-import com.mobilebytelabs.paycraft.presentation.parseHexColor
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
+import com.mobilebytelabs.paycraft.ui.theme.parseHexColor
 
 /**
  * Drop-in Settings-tab premium upsell banner — the consumer-app entry point to

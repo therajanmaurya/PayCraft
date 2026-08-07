@@ -6,6 +6,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.dp
+import com.mobilebytelabs.paycraft.config.SuiteConfig
 
 /**
  * PayCraft theme configuration.
@@ -15,7 +16,20 @@ import androidx.compose.ui.unit.dp
  * don't wrap them in [PayCraftThemeProvider] they fall back to [PayCraftTheme.Default],
  * which reads tonal roles from the host app's [MaterialTheme].
  *
- * ### Usage — custom theme
+ * ### Usage — host inherit (SDK default; recommended)
+ * ```kotlin
+ * // Inside your host app's MaterialTheme:
+ * PayCraftThemeProvider(config = PayCraft.suiteConfig) {
+ *     PayCraftPaywall(onDismiss = { })
+ * }
+ * ```
+ *
+ * When `config` is `null` (or `config.themeOverride` is null), PayCraft inherits the
+ * host's [MaterialTheme.colorScheme] and [MaterialTheme.typography] wholesale (AC-2).
+ * When `config.themeOverride` is present, its [BrandedPalette] wins for the mapped
+ * fields and everything else still inherits (AC-3).
+ *
+ * ### Usage — explicit token override
  * ```kotlin
  * PayCraftThemeProvider(
  *     theme = PayCraftTheme(
@@ -28,13 +42,6 @@ import androidx.compose.ui.unit.dp
  * ) {
  *     PayCraftPaywall(onDismiss = { })
  * }
- * ```
- *
- * ### Usage — only override accent
- * ```kotlin
- * PayCraftThemeProvider(
- *     theme = PayCraftTheme.Default.withAccent(Color(0xFFFF6F00))
- * ) { ... }
  * ```
  */
 data class PayCraftTheme(
@@ -177,16 +184,52 @@ data class PayCraftShape(
 val LocalPayCraftTheme = staticCompositionLocalOf { PayCraftTheme.Default }
 
 /**
- * Provides [theme] to all PayCraft composables in [content].
+ * Sole PayCraft theme entry point — resolves the effective MaterialTheme with a
+ * **config-wins-else-host-inherit** precedence and provides the derived
+ * [PayCraftTheme] tokens via [LocalPayCraftTheme].
  *
- * Not required — PayCraft works without it using [PayCraftTheme.Default].
+ * Precedence (per epic AC-2 + AC-3):
+ * 1. If [config] carries a non-null [SuiteConfig.themeOverride] (dashboard set
+ *    `paywall.theme_jsonb` / `paywall.primary_color`), its [BrandedPalette]
+ *    layers on top of the host [MaterialTheme.colorScheme] — the branded
+ *    fields win, unset fields inherit.
+ * 2. Otherwise the resolved scheme IS the host [MaterialTheme.colorScheme]
+ *    verbatim; PayCraft blends into the consumer app's Material3 palette.
+ *
+ * Typography always inherits the host [MaterialTheme.typography] — cloud brand
+ * fonts are out of scope for the SDK's Compose layer.
+ *
+ * [LocalPayCraftTheme] is derived from the resolved MaterialTheme via the
+ * [PayCraftTheme.materialAdaptive] semantics — so downstream token consumers
+ * (`PayCraftTheme.colors.accent`, etc.) automatically pick up the config-wins
+ * palette without any per-composable rewiring. When [theme] is anything other
+ * than [PayCraftTheme.Default], the caller's explicit token axes win over the
+ * adaptive derivation.
  */
 @Composable
-fun PayCraftThemeProvider(theme: PayCraftTheme = PayCraftTheme.Default, content: @Composable () -> Unit) {
-    CompositionLocalProvider(
-        LocalPayCraftTheme provides theme,
-        content = content,
-    )
+fun PayCraftThemeProvider(
+    theme: PayCraftTheme = PayCraftTheme.Default,
+    config: SuiteConfig? = null,
+    content: @Composable () -> Unit,
+) {
+    val hostScheme = MaterialTheme.colorScheme
+    val hostTypography = MaterialTheme.typography
+    val branded = config?.themeOverride?.toColorScheme(hostScheme)
+    val resolvedScheme = branded ?: hostScheme
+    MaterialTheme(
+        colorScheme = resolvedScheme,
+        typography = hostTypography,
+    ) {
+        val payCraftTheme = if (theme == PayCraftTheme.Default) {
+            PayCraftTheme.materialAdaptive()
+        } else {
+            theme
+        }
+        CompositionLocalProvider(
+            LocalPayCraftTheme provides payCraftTheme,
+            content = content,
+        )
+    }
 }
 
 // ------------------------------------------------------------------

@@ -136,3 +136,47 @@ private fun PremiumLockedContent(
         }
     }
 }
+
+/**
+ * Inline-paywall variant of [PayCraftPremiumGuard] — when the user is not premium
+ * this composable renders the full paywall inline (via [PayCraftPaywallComposable])
+ * instead of the lock screen + callback pattern. Use this when you want the
+ * gated feature's parent surface to show the upgrade options directly, without
+ * routing the user through a separate paywall screen/sheet.
+ *
+ * Premium users still see [content] verbatim. Non-premium users see the single
+ * paywall path (Phase-2 clean-SDK consolidation, AC-4) rendered in the same
+ * container [content] would have occupied.
+ *
+ * @param onDismiss     Called when the user dismisses the inline paywall (close
+ *                      button tap or viewmodel Dismissed event). Hosts usually
+ *                      navigate away from the gated surface here.
+ * @param modifier      Optional modifier applied to the root container.
+ * @param billingManager Billing manager — Koin-injected by default.
+ * @param content       Composable rendered when the user is Premium.
+ */
+@Composable
+fun PayCraftPremiumGuardInline(
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    billingManager: BillingManager = koinInject(),
+    content: @Composable () -> Unit,
+) {
+    val billingState by billingManager.billingState.collectAsStateWithLifecycle()
+
+    when (billingState) {
+        is BillingState.Premium -> {
+            Box(
+                modifier = modifier.testTag(PayCraftTestTags.PREMIUM_GUARD_UNLOCKED),
+            ) {
+                content()
+            }
+        }
+
+        else -> PayCraftPaywallComposable(
+            onDismiss = onDismiss,
+            displayMode = DisplayMode.FullScreen,
+            modifier = modifier.testTag(PayCraftTestTags.PREMIUM_GUARD_LOCKED),
+        )
+    }
+}
