@@ -7,27 +7,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
-import com.mobilebytelabs.paycraft.presentation.MobileByteSenseiTheme
 import com.mobilebytelabs.paycraft.presentation.components.PlanCard
+import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
+import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsDark
 
 /**
- * Dark template — uses [MobileByteSenseiTheme.colorsDark] palette,
- * elevated surface on a near-black background, high-contrast typography.
+ * Dark template — uses [PayCraftBrandColorsDark] palette (the PayCraft brand
+ * dark scheme), elevated surface on a near-black background, high-contrast
+ * typography.
  */
 @Composable
 fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit) {
-    val bg = MobileByteSenseiTheme.colorsDark.background
-    val onBg = MobileByteSenseiTheme.colorsDark.onBackground
+    val bg = PayCraftBrandColorsDark.background
+    val onBg = PayCraftBrandColorsDark.onBackground
     Box(
         Modifier
             .fillMaxSize()
@@ -46,13 +46,13 @@ fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product)
 }
 
 @Composable
-private fun DarkLoading(textColor: Color) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(color = MobileByteSenseiTheme.colorsDark.primary)
-            Text("Loading…", color = textColor, style = MaterialTheme.typography.bodyLarge)
-        }
-    }
+private fun DarkLoading(@Suppress("UNUSED_PARAMETER") textColor: Color) {
+    // Phase 3 (AC-5, AC-14): shared PaywallSkeleton — the deprecated Dark template's
+    // Loading branch now delegates to the same layout-matched skeleton so no
+    // CircularProgressIndicator remains on any state=Loading path in the SDK.
+    // The `textColor` parameter is kept for backward-compat signature stability
+    // (the deprecated DarkTemplate signature is still shipped for 3.0 removal).
+    PaywallSkeleton(planCount = 3)
 }
 
 @Composable

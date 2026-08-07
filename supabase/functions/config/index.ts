@@ -282,6 +282,20 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
   // emit a v2-default body so the SDK has all the fields it expects rather than choking
   // on missing keys. Defaults match migration 071's column-level DEFAULT clauses so the
   // fallback shape mirrors a freshly-inserted row.
+  //
+  // Phase-4 clean-SDK (cmp-paycraft 2.1.x, AC-9): expose a top-level `"mode"` field
+  // — `"ad_supported" | "trial_managed" | null` — that the SDK reads as the config-
+  // wins override for its init-time MonetizationMode flag. Sourced from a future
+  // `tenant_paywall.mode` (or `tenants.monetization_mode`) column; until the migration
+  // lands the read returns null and the SDK falls back to its init flag (default
+  // AdSupported) — additive/safe, older SDKs with ignoreUnknownKeys=true skip it.
+  const paywallRow = paywallRes.data as Record<string, unknown> | null
+  const tenantRow = tenantRes.data as Record<string, unknown> | null
+  const monetizationMode =
+    (paywallRow?.["mode"] as string | undefined) ??
+    (tenantRow?.["monetization_mode"] as string | undefined) ??
+    null
+
   const body = {
     tenant_id: tenantId,
     plan: tenantRes.data?.plan,
@@ -306,6 +320,8 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     locale: localeCountry,
     geo_country: geoCountry,
     geo_source: geoSource,
+    // Phase-4 config-wins MonetizationMode passthrough — see comment above.
+    mode: monetizationMode,
     cache_ttl_seconds: 3600,
   }
 

@@ -8,6 +8,10 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.vanniktech.mavenPublish)
+    // Roborazzi Gradle plugin — generates recordRoborazziJvm / verifyRoborazziJvm tasks
+    // once `roborazzi-compose-desktop` is on the jvmTest classpath. Applied to :cmp-paycraft
+    // only (AC-15 device-free golden gate for skeleton + Content paywall + ProductList).
+    alias(libs.plugins.roborazzi)
 }
 
 group = "io.github.mobilebytelabs"
@@ -153,6 +157,12 @@ kotlin {
             dependencies {
                 // Skiko native runtime — required for runComposeUiTest on the JVM target
                 implementation(compose.desktop.currentOs)
+                // Roborazzi Compose Desktop — device-free golden capture (AC-15). Scoped to
+                // jvmTest ONLY: `roborazzi-compose-desktop` pulls Skiko-desktop transitively,
+                // which is incompatible with js/wasm/ios compile, and Android AAR variants of
+                // the plain `roborazzi` module. Keeping it in jvmTest keeps the publish clean
+                // (nothing leaks into the six target artifacts) and matches the memory recipe.
+                implementation(libs.roborazzi.compose.desktop)
             }
         }
     }

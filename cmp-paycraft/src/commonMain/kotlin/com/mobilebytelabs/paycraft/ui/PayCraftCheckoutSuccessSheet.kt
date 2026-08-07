@@ -19,7 +19,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -138,5 +141,60 @@ fun PayCraftCheckoutSuccessSheet(
                 )
             }
         }
+    }
+}
+
+/**
+ * Post-checkout continuation variant — renders [PayCraftCheckoutSuccessSheet]
+ * first, and once the user taps the CTA (or the sheet dismisses) transitions to
+ * the full paywall via [PayCraftPaywallComposable]. Use this for tier-ladder
+ * flows where a successful entry-tier purchase should immediately expose the
+ * next-tier upgrade options (annual → lifetime, monthly → annual) inside the
+ * same session — a pattern shipped by RevenueCat's post-checkout upsell.
+ *
+ * Delegates through [PayCraftPaywallComposable] so the paywall renders through
+ * the single v2 template path (Phase-2 clean-SDK consolidation, AC-4).
+ *
+ * @param activatedSku SKU the user just activated — same contract as
+ *                     [PayCraftCheckoutSuccessSheet].
+ * @param sessionId    Session identifier used by [CheckoutSuccessFlag] for
+ *                     once-per-session suppression.
+ * @param onFinalDismiss Called after the paywall dismisses (or after the success
+ *                       sheet dismisses when [showUpgradePaywall] is false).
+ * @param showUpgradePaywall When true (default) the paywall opens after CTA tap.
+ *                           Set false to skip the upsell and fire [onFinalDismiss]
+ *                           straight from the success CTA.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PayCraftCheckoutSuccessSheetOrPaywall(
+    activatedSku: String,
+    sessionId: String,
+    onFinalDismiss: () -> Unit,
+    showUpgradePaywall: Boolean = true,
+) {
+    var upsellVisible by remember(activatedSku, sessionId) { mutableStateOf(false) }
+
+    if (upsellVisible) {
+        PayCraftPaywallComposable(
+            onDismiss = {
+                upsellVisible = false
+                onFinalDismiss()
+            },
+            displayMode = DisplayMode.FullScreen,
+        )
+    } else {
+        PayCraftCheckoutSuccessSheet(
+            activatedSku = activatedSku,
+            sessionId = sessionId,
+            onCtaTap = {
+                if (showUpgradePaywall) {
+                    upsellVisible = true
+                } else {
+                    onFinalDismiss()
+                }
+            },
+            onDismiss = onFinalDismiss,
+        )
     }
 }

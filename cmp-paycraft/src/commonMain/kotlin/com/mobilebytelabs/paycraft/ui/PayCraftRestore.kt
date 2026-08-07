@@ -51,7 +51,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.mobilebytelabs.paycraft.PayCraft
-import com.mobilebytelabs.paycraft.config.effectiveThemeOverride
 import com.mobilebytelabs.paycraft.core.BillingManager
 import com.mobilebytelabs.paycraft.generated.resources.Res
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_email_error_empty
@@ -75,8 +74,8 @@ import com.mobilebytelabs.paycraft.generated.resources.paycraft_restore_success_
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_restore_title
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_restore_verifying_identity
 import com.mobilebytelabs.paycraft.model.BillingState
-import com.mobilebytelabs.paycraft.presentation.PayCraftThemeProvider
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
+import com.mobilebytelabs.paycraft.ui.theme.PayCraftThemeProvider
 import kotlinx.coroutines.delay
 import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.koinInject
@@ -140,9 +139,8 @@ fun PayCraftRestore(
     // inherit the PayCraftThemeProvider wrapping the paywall, so without this the
     // restore sheet renders in the host app's MaterialTheme (e.g. reels-downloader's
     // blue) instead of PayCraft's configured brand. Mirrors PayCraftPaywallSheet.
-    val themeOverride = PayCraft.suiteConfigFlow.collectAsState().value
-        ?.paywall?.effectiveThemeOverride.orEmpty()
-    PayCraftThemeProvider(themeOverride = themeOverride) {
+    val liveConfig = PayCraft.suiteConfigFlow.collectAsState().value
+    PayCraftThemeProvider(config = liveConfig) {
         ModalBottomSheet(
             onDismissRequest = onDismiss,
             sheetState = sheetState,
@@ -536,4 +534,28 @@ private fun triggerEmailRestore(
         !trimmed.contains("@") || !trimmed.contains(".") -> onSetEmailError(errorInvalid)
         else -> onRestore()
     }
+}
+
+/**
+ * Paywall-integrated restore surface — the single-composable variant that hosts
+ * pick when they want the paywall AND the modal restore sheet in one drop-in
+ * (typically a "welcome back" flow that opens the paywall on cold start and
+ * silently exposes the restore modal via the paywall's legal-footer RESTORE link).
+ *
+ * Delegates through [PayCraftPaywallComposable] so the paywall renders through the
+ * single v2 template path (Phase-2 clean-SDK consolidation, AC-4). The restore
+ * modal itself is rendered by [PayCraftPaywallComposable] internally — no separate
+ * [PayCraftRestore] call is needed at the host layer.
+ *
+ * @param onDismiss Called when the paywall dismisses (close button, sheet dismiss,
+ *                  or a successful restore that navigates the user away).
+ * @param modifier  Optional modifier applied to the root surface.
+ */
+@Composable
+fun PayCraftPaywallWithRestore(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    PayCraftPaywallComposable(
+        onDismiss = onDismiss,
+        displayMode = DisplayMode.FullScreen,
+        modifier = modifier,
+    )
 }

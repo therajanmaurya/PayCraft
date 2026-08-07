@@ -77,8 +77,8 @@ import com.mobilebytelabs.paycraft.model.BillingBenefit
 import com.mobilebytelabs.paycraft.model.BillingPlan
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.SubscriptionStatus
-import com.mobilebytelabs.paycraft.presentation.parseHexColor
 import com.mobilebytelabs.paycraft.provider.StripeProvider
+import com.mobilebytelabs.paycraft.ui.theme.parseHexColor
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.koinInject
@@ -625,6 +625,29 @@ private fun TestModeChip(modifier: Modifier = Modifier) {
             fontWeight = FontWeight.Bold,
         )
     }
+}
+
+/**
+ * Compact one-liner paywall banner — the minimal companion to the rich
+ * [PayCraftBanner] gradient card. Renders through [PayCraftPaywallComposable] in
+ * [DisplayMode.Banner] so the compact strip shares the single paywall path with
+ * every other public paywall composable (Phase-2 clean-SDK consolidation, AC-4).
+ *
+ * Hosts that only need a one-line "Upgrade / Premium active / Verify ownership"
+ * strip (typically inside a top app bar or a settings row) can pick this variant
+ * instead of the full gradient card. Tapping the strip invokes [onDismiss];
+ * hosts usually open the full paywall from there.
+ *
+ * @param onDismiss Called when the user taps the compact banner strip.
+ * @param modifier  Optional modifier applied to the root surface.
+ */
+@Composable
+fun PayCraftInlinePaywallBanner(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    PayCraftPaywallComposable(
+        onDismiss = onDismiss,
+        displayMode = DisplayMode.Banner,
+        modifier = modifier,
+    )
 }
 
 @Composable

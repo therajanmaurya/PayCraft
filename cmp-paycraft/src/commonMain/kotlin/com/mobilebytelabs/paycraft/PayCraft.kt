@@ -8,7 +8,14 @@ import com.mobilebytelabs.paycraft.config.CouponDto
 import com.mobilebytelabs.paycraft.config.ProductDto
 import com.mobilebytelabs.paycraft.config.ProviderDto
 import com.mobilebytelabs.paycraft.config.SuiteConfig
+import com.mobilebytelabs.paycraft.core.AdFreeEntitlement
 import com.mobilebytelabs.paycraft.core.BillingManager
+import com.mobilebytelabs.paycraft.core.EntitlementSnapshot
+import com.mobilebytelabs.paycraft.core.MonetizationMode
+import com.mobilebytelabs.paycraft.core.MonetizationModeResolver
+import com.mobilebytelabs.paycraft.core.PaywallPresentation
+import com.mobilebytelabs.paycraft.core.SessionDebounce
+import com.mobilebytelabs.paycraft.core.TrialSnapshot
 import com.mobilebytelabs.paycraft.debug.PayCraftLogger
 import com.mobilebytelabs.paycraft.model.BillingBenefit
 import com.mobilebytelabs.paycraft.model.BillingPlan
@@ -101,12 +108,54 @@ object PayCraft {
     enum class Mode { Test, Live, Unknown }
 
     /** Long-lived scope for the SDK's background work — currently just the cloud SuiteConfig fetch. */
-    private val sdkScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var configFetchJob: Job? = null
     private var initOptions: InitOptions = InitOptions()
 
     private var _activeCountry: String = CurrencyResolver.DEFAULT_COUNTRY
     private var _activeCurrency: String = CurrencyResolver.FALLBACK_CURRENCY
+
+    // ─── Phase-4 monetization-mode state (AC-9..AC-12) ───────────────────────
+    /** The host-supplied init-flag — kept so a fresh SuiteConfig can be re-resolved against it. */
+    private var initialMonetizationMode: MonetizationMode = MonetizationMode.AdSupported
+
+    /**
+     * The RESOLVED monetization mode = [MonetizationModeResolver.resolve] over
+     * ([initialMonetizationMode], [suiteConfig]?.mode). Updated once at
+     * [initialize] with a null cloud value, then re-resolved every time
+     * [applySuiteConfig] lands a fresh SuiteConfig so a dashboard flip
+     * propagates without a host rebuild (AC-9, config-wins precedence).
+     */
+    private var resolvedMonetizationMode: MonetizationMode = MonetizationMode.AdSupported
+
+    /**
+     * The resolved monetization policy in effect (config-wins over init flag).
+     * Hosts read this to reason about mode-dependent behaviour (e.g. skip an
+     * ad-scheduling scheduler when [MonetizationMode.TrialManaged]).
+     */
+    val monetizationMode: MonetizationMode get() = resolvedMonetizationMode
+
+    /**
+     * Ad-free entitlement flag (AC-12). Mirrors the buyer's subscription status —
+     * true when premium/paying, false otherwise. Hosts in
+     * [MonetizationMode.AdSupported] mode read this to gate ad rendering; the flag
+     * is a re-exported [AdFreeEntitlement.isAdFree] so a single subscription
+     * refresh updates every observer atomically.
+     */
+    val isAdFree: StateFlow<Boolean> get() = AdFreeEntitlement.isAdFree
+
+    private val _paywallPresentation = MutableStateFlow<PaywallPresentation>(PaywallPresentation.Hidden)
+
+    /**
+     * Reactive paywall-presentation request signal (AC-10, AC-11). Hosts observe
+     * this StateFlow and render [com.mobilebytelabs.paycraft.ui.PayCraftPaywallComposable]
+     * (typically inside a modal sheet) when the value is
+     * [PaywallPresentation.Shown]; on dismiss the host calls [dismissPaywall] to
+     * reset to [PaywallPresentation.Hidden]. Because the SDK is Compose-multiplatform
+     * with no UIKit-style modal primitive in commonMain, this observer pattern is
+     * the idiom that works across every KMP target.
+     */
+    val paywallPresentation: StateFlow<PaywallPresentation> = _paywallPresentation.asStateFlow()
 
     /**
      * The native store's OWN localized price per plan sku (Play `formattedPrice` / StoreKit
@@ -147,11 +196,19 @@ object PayCraft {
      *                 customers pass [PayCraftBackend.SelfHosted]; test code passes
      *                 [PayCraftBackend.Mock] with a static [SuiteConfig].
      * @param options  Optional locale override, cache-skip, and debug logging toggle.
+     * @param mode     The default monetization policy (AC-9). [MonetizationMode.AdSupported]
+     *                 keeps the paywall manual/contextual and exposes [isAdFree] for host
+     *                 ad-gating; [MonetizationMode.TrialManaged] auto-presents the paywall
+     *                 on [onAppOpen] while a trial is active or just ended. Overridable by
+     *                 cloud [SuiteConfig.mode] — cloud wins when present (same precedence as
+     *                 the theme pipeline). Trailing param with a default so every existing
+     *                 caller (positional or named) keeps compiling unchanged.
      */
     fun initialize(
         apiKey: String,
         backend: PayCraftBackend = PayCraftBackend.Cloud,
         options: InitOptions = InitOptions(),
+        mode: MonetizationMode = MonetizationMode.AdSupported,
     ) {
         require(apiKey.startsWith("pk_test_") || apiKey.startsWith("pk_live_") || backend is PayCraftBackend.Mock) {
             "apiKey must start with pk_test_ or pk_live_"
@@ -159,6 +216,22 @@ object PayCraft {
         this.apiKey = apiKey
         this.backend = backend
         this.initOptions = options
+        // Capture the init-flag AND resolve against whatever SuiteConfig the previous
+        // process/session left in _suiteConfigFlow (usually null at cold start; a cached
+        // config in the same process re-boot wins immediately). applySuiteConfig() will
+        // re-resolve every subsequent fresh config landing, so a dashboard flip mid-run
+        // takes effect on the next cloud fetch without waiting for the next initialize().
+        this.initialMonetizationMode = mode
+        this.resolvedMonetizationMode = MonetizationModeResolver.resolve(mode, _suiteConfigFlow.value?.mode)
+        // Reset the presentation signal to Hidden — a stale Shown from the previous
+        // process boot would otherwise pop the paywall back up before the host had
+        // a chance to observe. onAppOpen()/presentPaywall() will re-emit as needed.
+        _paywallPresentation.value = PaywallPresentation.Hidden
+        // Do NOT reset SessionDebounce here — initialize() may be called multiple times
+        // in an SDK re-init flow (rare, but supported for testing), and the once-per-
+        // session semantics must survive across those re-inits so the buyer doesn't see
+        // the auto-present paywall twice in one process. Debounce clears only on process
+        // death (the natural session boundary) or explicitly via SessionDebounce test helpers.
         // Decide the billing country ONCE — the single deciding point that drives the /config
         // locale, the displayed price, and every provider's checkout currency. Override wins,
         // else the device region, else "US". The STORE STOREFRONT (the true billing region) is a
@@ -212,13 +285,32 @@ object PayCraft {
                 },
             )
 
-            // Kick off the async SuiteConfig fetch from the backend's /config endpoint.
+            // Kick off the async SuiteConfig fetch AND products prefetch (AC-8) from the
+            // backend's /config endpoint. Fire-and-forget — initialize() returns immediately
+            // without awaiting the network round-trip. On repeat opens the paywall Content
+            // branch composes on the first frame from the multiplatform-settings offline
+            // cache and the shimmer never appears; cold-cache opens see the layout-matched
+            // PaywallSkeleton exactly once until this prefetch completes and republishes.
             // ConfigClient handles the cache fallback for offline-graceful degradation.
             configFetchJob?.cancel()
-            configFetchJob = sdkScope.launch {
-                fetchAndApplySuiteConfig(apiKey, backend, options)
-            }
+            configFetchJob = applicationScope.launch { prefetchProducts() }
         }
+    }
+
+    /**
+     * Fire-and-forget products + config prefetch — the AC-8 warm-cache path. Called from
+     * [initialize] inside an [applicationScope] launch so it never blocks initialize's return.
+     * Writes through the existing SuiteConfig cache path so the paywall Content branch
+     * renders on the first frame on repeat opens (no visible skeleton on warm cache).
+     *
+     * Public so hosts that want to explicitly warm the cache before opening the paywall
+     * (a splash screen, a home-tab prefetch) can invoke it as a suspend function — the
+     * initialize() call itself is fire-and-forget and never awaits this.
+     */
+    suspend fun prefetchProducts() {
+        val key = apiKey ?: return
+        if (backend is PayCraftBackend.Mock) return
+        fetchAndApplySuiteConfig(key, backend, initOptions)
     }
 
     /**
@@ -232,7 +324,7 @@ object PayCraft {
         val key = apiKey ?: return
         if (backend is PayCraftBackend.Mock) return
         configFetchJob?.cancel()
-        configFetchJob = sdkScope.launch {
+        configFetchJob = applicationScope.launch {
             fetchAndApplySuiteConfig(key, backend, initOptions)
         }
     }
@@ -408,6 +500,12 @@ object PayCraft {
         // The cloud resolved prices for the active locale; capture the single currency every
         // provider + the displayed price now share (uniform across products for a locale).
         _activeCurrency = CurrencyResolver.resolveCurrency(resolved.plans)
+        // Config-wins precedence for the monetization mode (AC-9): whenever a fresh
+        // SuiteConfig lands, re-resolve against the host-supplied init flag so a
+        // dashboard flip ("ad_supported" ↔ "trial_managed") takes effect on the next
+        // cloud fetch without a host rebuild. Null cloud value (no `mode` field in
+        // this tenant's response yet) leaves the init flag in charge — additive/safe.
+        resolvedMonetizationMode = MonetizationModeResolver.resolve(initialMonetizationMode, suite.mode)
         _suiteConfigFlow.value = suite
         PayCraftLogger.onSuiteConfigApplied(
             source = resolved.source.name,
@@ -598,6 +696,159 @@ object PayCraft {
         PayCraftLogger.onManageSubscription(mode = "cloud", url = url)
         if (url != null) PayCraftPlatform.openUrl(url)
     }
+
+    // ─── Phase-4 paywall-presentation API (AC-10, AC-11, AC-12) ─────────────
+    //
+    // The two present APIs are ALWAYS public regardless of the resolved monetization
+    // mode — per the union design in GOAL.md D3 the host may call either per-call
+    // (a TrialManaged host can still trigger a contextual manual paywall; an
+    // AdSupported host can still call presentPaywallIfNeeded to gate the paywall
+    // on entitlement). Both dispatch through the same reactive [paywallPresentation]
+    // StateFlow so a host's compose tree observing the flow will render the paywall
+    // in a sheet identically for every trigger.
+
+    /**
+     * Present the paywall NOW — the manual/contextual entry point (AC-10). Always
+     * public regardless of [monetizationMode]. Hosts call this from a "get premium"
+     * button, a post-ad interstitial, a "download in HD" upsell, etc.
+     *
+     * Sets [paywallPresentation] to [PaywallPresentation.Shown] with the [Manual]
+     * trigger — hosts observing the flow render [com.mobilebytelabs.paycraft.ui.PayCraftPaywallComposable]
+     * in a modal sheet on state=Shown, dismiss the sheet + call [dismissPaywall] on
+     * user close. Idempotent: calling twice while already Shown re-emits the same
+     * state (harmless — StateFlow deduplicates identical values).
+     */
+    fun presentPaywall() {
+        PayCraftLogger.onFlow("presentPaywall", "manual — mode=$resolvedMonetizationMode")
+        _paywallPresentation.value = PaywallPresentation.Shown(
+            trigger = PaywallPresentation.Shown.Trigger.Manual,
+        )
+    }
+
+    /**
+     * Present the paywall ONLY if the buyer does not already hold [entitlement]
+     * (AC-10). Always public regardless of [monetizationMode]. A no-op when the
+     * entitlement is active — mirroring RevenueCat's `presentPaywallIfNeeded`.
+     *
+     * Today PayCraft models a single "premium" entitlement (see
+     * [com.mobilebytelabs.paycraft.core.EntitlementSnapshot]) — [isAdFree] is the
+     * observable truth for that entitlement, so any [entitlement] name resolves
+     * through the same flag until multi-entitlement support lands (out of scope
+     * for Phase 4). Passing `null` uses the default "premium" name explicitly for
+     * clarity in the [PaywallPresentation.Shown.entitlement] field.
+     *
+     * @param entitlement Optional entitlement to check; defaults to the SDK's
+     *                    single "premium" entitlement. Recorded on the emitted
+     *                    [PaywallPresentation.Shown.entitlement] for analytics.
+     */
+    fun presentPaywallIfNeeded(entitlement: String? = null) {
+        // Entitlement-active no-op path — the AC-10 assertion. AdFreeEntitlement is the
+        // single source of truth for "user is paying" (updated on every onAppOpen and
+        // by hosts pushing subscription refreshes), so `isAdFree.value == true` is the
+        // authoritative "premium is active" signal.
+        if (AdFreeEntitlement.isAdFree.value) {
+            PayCraftLogger.onFlow(
+                "presentPaywallIfNeeded",
+                "no-op — entitlement ${entitlement ?: DEFAULT_ENTITLEMENT} already active",
+            )
+            return
+        }
+        PayCraftLogger.onFlow(
+            "presentPaywallIfNeeded",
+            "showing — entitlement ${entitlement ?: DEFAULT_ENTITLEMENT} not active",
+        )
+        _paywallPresentation.value = PaywallPresentation.Shown(
+            trigger = PaywallPresentation.Shown.Trigger.IfNeeded,
+            entitlement = entitlement ?: DEFAULT_ENTITLEMENT,
+        )
+    }
+
+    /**
+     * App-open dispatch entry point (AC-11, AC-12). Hosts call this from their
+     * app lifecycle onResume/onCreate hook (Android Activity, iOS SceneDelegate).
+     * The dispatch is mode-driven:
+     *
+     * ─ [MonetizationMode.TrialManaged]: auto-presents the paywall ONCE per
+     *   process when the buyer is NOT already premium AND has an active or
+     *   just-ended trial (the convert-or-churn moment) AND
+     *   [SessionDebounce.APP_OPEN_KEY] is not yet marked. Marks the debounce on
+     *   present so a rapid app-open cycle does not re-present.
+     *
+     * ─ [MonetizationMode.AdSupported]: never auto-presents (the manual
+     *   [presentPaywall] path is the only paywall trigger). Updates the
+     *   [AdFreeEntitlement] flag from [entitlement.isPremium] so the host's ad
+     *   gating stays in sync with the current subscription status.
+     *
+     * In both modes the [AdFreeEntitlement] flag is updated up-front so a single
+     * onAppOpen call is the "resync entitlement + maybe present" combined signal
+     * regardless of mode.
+     *
+     * @param entitlement Snapshot of the buyer's subscription state — hosts
+     *                    derive from [com.mobilebytelabs.paycraft.core.BillingManager.isPremium].
+     * @param trial       Snapshot of the buyer's trial state — hosts derive from
+     *                    [com.mobilebytelabs.paycraft.core.BillingManager.isInTrial] +
+     *                    [com.mobilebytelabs.paycraft.core.BillingManager.trialEndsAt].
+     */
+    fun onAppOpen(entitlement: EntitlementSnapshot, trial: TrialSnapshot) {
+        // Update the ad-free flag from the snapshot up-front — the host observes
+        // this in AdSupported mode to gate ads (AC-12), and in TrialManaged mode
+        // the same signal represents "user is premium, don't nag with the paywall".
+        AdFreeEntitlement.set(entitlement.isPremium)
+        when (resolvedMonetizationMode) {
+            MonetizationMode.TrialManaged -> {
+                // Never nag a paying user — premium takes precedence over trial state
+                // (a premium user WHO STARTED FROM TRIAL still has premium=true).
+                if (entitlement.isPremium) {
+                    PayCraftLogger.onFlow("onAppOpen", "trialManaged skip — buyer is premium")
+                    return
+                }
+                // Never nag a buyer who never had a trial (isActive=false AND hasEnded=false).
+                // isActiveOrNearExpiry captures the two auto-present classes: active trial
+                // (mid-trial nudge) OR just-ended trial (convert-or-churn moment).
+                if (!trial.isActiveOrNearExpiry) {
+                    PayCraftLogger.onFlow("onAppOpen", "trialManaged skip — no active/ended trial")
+                    return
+                }
+                // Once-per-session debounce (AC-11): if the paywall was already auto-presented
+                // this process, do not present again on a subsequent onAppOpen — a rapid
+                // background/foreground cycle would otherwise re-open the paywall.
+                if (SessionDebounce.wasShown(SessionDebounce.APP_OPEN_KEY)) {
+                    PayCraftLogger.onFlow("onAppOpen", "trialManaged skip — already shown this session")
+                    return
+                }
+                SessionDebounce.mark(SessionDebounce.APP_OPEN_KEY)
+                PayCraftLogger.onFlow(
+                    "onAppOpen",
+                    "trialManaged auto-present — trial.isActive=${trial.isActive} " +
+                        "hasEnded=${trial.hasEnded} daysRemaining=${trial.daysRemaining}",
+                )
+                _paywallPresentation.value = PaywallPresentation.Shown(
+                    trigger = PaywallPresentation.Shown.Trigger.TrialManagedAppOpen,
+                )
+            }
+            MonetizationMode.AdSupported -> {
+                // No auto-present in AdSupported mode (AC-12). The AdFreeEntitlement update
+                // above already reflected the buyer's premium status; the host reads it to
+                // gate ads and calls presentPaywall() itself when it wants to upsell.
+                PayCraftLogger.onFlow(
+                    "onAppOpen",
+                    "adSupported — isAdFree=${entitlement.isPremium} (host owns paywall trigger)",
+                )
+            }
+        }
+    }
+
+    /**
+     * Reset the paywall presentation signal back to [PaywallPresentation.Hidden].
+     * Hosts call this from the modal sheet's dismiss handler so the flow observer
+     * closes the sheet. Idempotent: calling twice while already Hidden is a no-op.
+     */
+    fun dismissPaywall() {
+        _paywallPresentation.value = PaywallPresentation.Hidden
+    }
+
+    /** Default entitlement name used when [presentPaywallIfNeeded] is called without one. */
+    private const val DEFAULT_ENTITLEMENT = "premium"
 }
 
 data class InitOptions(

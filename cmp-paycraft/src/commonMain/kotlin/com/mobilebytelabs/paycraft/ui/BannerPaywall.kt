@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +24,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mobilebytelabs.paycraft.model.BillingState
+import com.mobilebytelabs.paycraft.ui.components.skeleton.BannerShimmerRow
+import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Compact, state-aware billing strip designed to live on a host screen — typically the
@@ -82,20 +83,24 @@ fun BannerPaywall(state: BillingState, onTap: () -> Unit, modifier: Modifier = M
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (state is BillingState.Loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor,
+                // Phase 3 (AC-5, AC-14): the banner Loading branch renders a
+                // layout-matched shimmer pill instead of a CircularProgressIndicator,
+                // so the compact banner keeps the same intrinsic height when
+                // swapping between Loading/Free/Premium and never flashes a spinner.
+                BannerShimmerRow(
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.size(width = 12.dp, height = 0.dp))
+            } else {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(PayCraftTestTags.BANNER_LABEL),
+                )
             }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.testTag(PayCraftTestTags.BANNER_LABEL),
-            )
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.size(width = 12.dp, height = 0.dp))
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
@@ -103,4 +108,56 @@ fun BannerPaywall(state: BillingState, onTap: () -> Unit, modifier: Modifier = M
             )
         }
     }
+}
+
+/**
+ * Convenience overload — the ViewModel-observing version of [BannerPaywall]
+ * that hosts drop into a screen without wiring their own state.
+ *
+ * Delegates through [PayCraftPaywallComposable] with [DisplayMode.Banner] so the
+ * banner shares the single paywall path with [PayCraftPaywall] / [PayCraftPaywallSheet]
+ * (Phase-2 clean-SDK consolidation, AC-4). The composable observes
+ * [PayCraftPaywallViewModel.state] and re-renders the compact status strip on every
+ * [BillingState] transition.
+ *
+ * @param onTap    Called when the user taps the banner. Hosts usually open the full
+ *                 paywall here.
+ * @param modifier Optional modifier applied to the root surface.
+ * @param viewModel ViewModel — Koin-injected by default.
+ */
+@Composable
+fun BannerPaywall(
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: PayCraftPaywallViewModel = koinViewModel(),
+) {
+    // Route through the single paywall path so a future template-side banner
+    // redesign lands in ONE place instead of forking between v1/v2.
+    PayCraftPaywallComposable(
+        onDismiss = onTap,
+        displayMode = DisplayMode.Banner,
+        modifier = modifier,
+        viewModel = viewModel,
+    )
+}
+
+/**
+ * Test / debug helper — resolves the compact banner label for [state] without
+ * standing up the full Compose runtime. Kept in sync with [BannerPaywall]'s own
+ * `when` above so unit tests can assert the state → label contract cheaply.
+ *
+ * @suppress internal — public visibility is a lint courtesy for the test harness;
+ * this is not part of the SDK's advertised surface.
+ */
+@Suppress("unused")
+internal fun bannerPaywallLabelFor(state: BillingState): String = when (state) {
+    is BillingState.Free -> "Upgrade to Premium"
+    is BillingState.Premium -> when {
+        state.trial != null -> "Free trial — ${state.trial.daysRemaining} days left"
+        else -> "Premium active"
+    }
+    is BillingState.Loading -> "Checking your subscription…"
+    is BillingState.Error -> "Couldn't sync — tap to retry"
+    is BillingState.DeviceConflict -> "Verify ownership to continue"
+    is BillingState.OwnershipVerified -> "Manage subscription"
 }
