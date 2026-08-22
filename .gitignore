@@ -116,6 +116,7 @@ cli/dist/
 supabase/migrations/*
 !supabase/migrations/075_routing_platform_dimension.sql
 !supabase/migrations/076_native_store_methods.sql
+!supabase/migrations/077_tenant_paywall_trial_disclosure.sql
 .vercel
 
 # Wrangler CLI cache (Cloudflare Workers)
