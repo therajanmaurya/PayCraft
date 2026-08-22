@@ -11,7 +11,7 @@
 #             L4 LOCAL READY WAIT  poll localhost:3000 until 200
 #             L5 LOCAL SMOKE       curl /api/health (expects env=local)
 #
-#   --prod    Promote development → main and let Vercel auto-deploy production
+#   --prod    Promote dev → main and let Vercel auto-deploy production
 #             1 PRE-FLIGHT     verify CLIs/vault/vercel/gh; warn on un-pushed dev commits;
 #                              TYPECHECK the dashboard (tsc --noEmit) so a broken build never
 #                              reaches main (--skip-build to bypass)
@@ -20,7 +20,7 @@
 #                              --allow-destructive) → pre-push schema BACKUP → supabase db push →
 #                              POST-PUSH VERIFY (0 pending). Aborts the chain on any failure.
 #             3.5 FUNCTIONS DEPLOY  vault-mediated supabase functions deploy (Edge Functions)
-#             4 PROMOTE        open PR development → main, merge it (fast-forward)
+#             4 PROMOTE        open PR dev → main, merge it (fast-forward)
 #             5 WAIT VERCEL    poll Vercel API for production deploy of main → READY (aborts on ERROR)
 #             6 SMOKE          curl /api/health + /auth/login + root + Edge Function /config reachability
 #
@@ -190,13 +190,13 @@ phase_1_preflight() {
 
     cd "$PAYCRAFT_SRC"
 
-    # Warn on un-pushed local development commits — prod promotes origin/development, so any
+    # Warn on un-pushed local dev commits — prod promotes origin/dev, so any
     # commit not pushed there will NOT deploy. (Warning only; you may be deploying intentionally.)
-    git fetch origin development 2>/dev/null || true
+    git fetch origin dev 2>/dev/null || true
     local unpushed
-    unpushed=$(git rev-list --count origin/development..development 2>/dev/null || echo 0)
+    unpushed=$(git rev-list --count origin/dev..dev 2>/dev/null || echo 0)
     if [[ "$unpushed" =~ ^[0-9]+$ && "$unpushed" -gt 0 ]]; then
-        echo "  ⚠ local 'development' is $unpushed commit(s) ahead of origin/development — those will NOT deploy."
+        echo "  ⚠ local 'dev' is $unpushed commit(s) ahead of origin/dev — those will NOT deploy."
         echo "    Push them first (/git-session-commit) if you intend to ship them."
     fi
 
@@ -399,48 +399,48 @@ phase_3_5_functions() {
     unset SUPABASE_ACCESS_TOKEN
 }
 
-# Phase 4 — promote development → main as exact fast-forward replica
+# Phase 4 — promote dev → main as exact fast-forward replica
 phase_4_promote() {
     cd "$PAYCRAFT_SRC"
 
-    # Ensure local main + development are up to date
-    git fetch origin development main 2>/dev/null
+    # Ensure local main + dev are up to date
+    git fetch origin dev main 2>/dev/null
 
     local dev_sha main_sha
-    dev_sha=$(git rev-parse origin/development)
+    dev_sha=$(git rev-parse origin/dev)
     main_sha=$(git rev-parse origin/main)
 
     if [[ "$dev_sha" = "$main_sha" ]]; then
-        echo "  ✓ main already at development HEAD ($dev_sha) — nothing to promote"
+        echo "  ✓ main already at dev HEAD ($dev_sha) — nothing to promote"
         return 0
     fi
 
-    echo "  development: $dev_sha"
+    echo "  dev: $dev_sha"
     echo "  main:        $main_sha"
-    echo "  Promoting development → main..."
+    echo "  Promoting dev → main..."
 
     if [[ "$APPLY" != "true" ]]; then
         local ahead
-        ahead=$(git rev-list --count origin/main..origin/development)
-        echo "  [DRY] would open PR development → main ($ahead commits ahead)"
-        echo "  [DRY] would auto-merge with --merge to keep main = development"
+        ahead=$(git rev-list --count origin/main..origin/dev)
+        echo "  [DRY] would open PR dev → main ($ahead commits ahead)"
+        echo "  [DRY] would auto-merge with --merge to keep main = dev"
         return 0
     fi
 
     # Check for an existing open dev→main PR; reuse if present
     local pr_num
-    pr_num=$(gh pr list --base main --head development --state open --json number --jq '.[0].number // empty' 2>/dev/null)
+    pr_num=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty' 2>/dev/null)
     if [[ -z "$pr_num" ]]; then
-        echo "  Opening PR development → main..."
-        pr_num=$(gh pr create --base main --head development \
-            --title "release: promote development → main ($(date -u +%Y-%m-%dT%H:%M:%SZ))" \
+        echo "  Opening PR dev → main..."
+        pr_num=$(gh pr create --base main --head dev \
+            --title "release: promote dev → main ($(date -u +%Y-%m-%dT%H:%M:%SZ))" \
             --body "Auto-opened by /paycraft-deploy Phase 4 PROMOTE.
 
-Source: origin/development @ ${dev_sha}
+Source: origin/dev @ ${dev_sha}
 Target: origin/main @ ${main_sha}
-Diff:   $(git rev-list --count origin/main..origin/development) commits
+Diff:   $(git rev-list --count origin/main..origin/dev) commits
 
-This PR is fast-forward-only — main is kept as an exact replica of development at promote time. No manual edits should land on main." 2>&1 | grep -oE 'https://[^ ]+/[0-9]+' | grep -oE '[0-9]+$' | head -1)
+This PR is fast-forward-only — main is kept as an exact replica of dev at promote time. No manual edits should land on main." 2>&1 | grep -oE 'https://[^ ]+/[0-9]+' | grep -oE '[0-9]+$' | head -1)
         if [[ -z "$pr_num" ]]; then
             echo "  ✗ Failed to open PR"; return 1
         fi
@@ -617,12 +617,12 @@ emit_status() {
 
     echo "─── branches ───────────────────────────────────────"
     cd "$PAYCRAFT_SRC"
-    git fetch -q origin development main 2>/dev/null || true
+    git fetch -q origin dev main 2>/dev/null || true
     local dev_sha main_sha ahead
-    dev_sha=$(git rev-parse --short origin/development 2>/dev/null || echo "?")
+    dev_sha=$(git rev-parse --short origin/dev 2>/dev/null || echo "?")
     main_sha=$(git rev-parse --short origin/main 2>/dev/null || echo "?")
-    ahead=$(git rev-list --count origin/main..origin/development 2>/dev/null || echo "?")
-    printf "development:   %s\n" "$dev_sha"
+    ahead=$(git rev-list --count origin/main..origin/dev 2>/dev/null || echo "?")
+    printf "dev:   %s\n" "$dev_sha"
     printf "main:          %s\n" "$main_sha"
     printf "ahead:         %s commits (dev ahead of main)\n" "$ahead"
     if [[ "$dev_sha" = "$main_sha" ]]; then

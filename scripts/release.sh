@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PayCraft Release Script
 # ─────────────────────────────────────────────────────────────────────────────
-# Merges development → main, runs the full quality gate locally, creates a
+# Merges dev → main, runs the full quality gate locally, creates a
 # git tag on main, and pushes to GitHub.
 # Pushing the tag triggers release.yml → creates GitHub Release →
 # which triggers publish.yml → publishes to Maven Central.
@@ -11,7 +11,7 @@
 #   ./scripts/release.sh --version 1.2.0   # explicit version
 #   ./scripts/release.sh --local-maven     # also publish to local Maven (~/.m2)
 #   ./scripts/release.sh --dry-run         # run checks only, no merge/tag/push
-#   ./scripts/release.sh --skip-merge      # skip development→main merge (already on main)
+#   ./scripts/release.sh --skip-merge      # skip dev→main merge (already on main)
 #
 # Prerequisites:
 #   - .env file exists (cp .env.example .env && fill it in)
@@ -91,26 +91,26 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
-# ── Step 1: Merge development → main ─────────────────────────────────────────
+# ── Step 1: Merge dev → main ─────────────────────────────────────────
 if [ "$SKIP_MERGE" = false ] && [ "$DRY_RUN" = false ]; then
-  echo "▶  [1/6] Merging development → main..."
+  echo "▶  [1/6] Merging dev → main..."
 
-  git fetch origin development main
+  git fetch origin dev main
 
-  BEHIND=$(git rev-list origin/main..origin/development --count 2>/dev/null || echo "0")
+  BEHIND=$(git rev-list origin/main..origin/dev --count 2>/dev/null || echo "0")
 
   if [ "$BEHIND" = "0" ]; then
-    echo "✅  main is already up-to-date with development"
+    echo "✅  main is already up-to-date with dev"
   else
-    echo "   development is $BEHIND commit(s) ahead of main — merging..."
+    echo "   dev is $BEHIND commit(s) ahead of main — merging..."
 
     git checkout main
     git pull origin main --ff-only
 
-    if git merge --ff-only origin/development 2>/dev/null; then
+    if git merge --ff-only origin/dev 2>/dev/null; then
       echo "   Fast-forward merge succeeded"
       git push origin main
-      echo "✅  development merged into main (fast-forward)"
+      echo "✅  dev merged into main (fast-forward)"
     else
       echo "   Fast-forward not possible — creating PR via gh CLI..."
       if ! command -v gh &>/dev/null; then
@@ -120,16 +120,16 @@ if [ "$SKIP_MERGE" = false ] && [ "$DRY_RUN" = false ]; then
 
       PR_URL=$(gh pr create \
         --base main \
-        --head development \
+        --head dev \
         --title "chore: release $TAG" \
-        --body "Automated merge of development → main for release $TAG" \
+        --body "Automated merge of dev → main for release $TAG" \
         2>&1 | tail -1)
 
       PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
       echo "   Created PR #$PR_NUMBER — merging..."
       gh pr merge "$PR_NUMBER" --merge --admin
       git pull origin main --ff-only
-      echo "✅  development merged into main via PR #$PR_NUMBER"
+      echo "✅  dev merged into main via PR #$PR_NUMBER"
     fi
   fi
 

@@ -19,6 +19,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -172,6 +173,77 @@ class ProductListTest {
         }
         val badges = onAllNodesWithTag(PayCraftTestTags.TRIAL_BADGE).fetchSemanticsNodes()
         assertEquals(0, badges.size, "no trial → no trial badge")
+    }
+
+    // ─── Play Subscriptions policy: trial-terms disclosure ────────────────
+    // The paywall must clearly state the trial length, the post-trial price +
+    // cadence (on the offer itself), and how to cancel. Missing post-trial price
+    // is what got reels-downloader rejected (Subscriptions policy, version 33).
+
+    @Test
+    fun trial_eligible_card_shows_post_trial_price_terms() = runComposeUiTest {
+        setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalPayCraftConfig provides config()) {
+                    ProductList(
+                        products = sampleProducts,
+                        onPurchase = {},
+                        recommendedSku = "annual",
+                    )
+                }
+            }
+        }
+        // trialProduct attaches to prod_monthly → the monthly card must carry a
+        // per-plan trial-terms line naming the post-trial price + cadence.
+        val terms = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_TRIAL_TERMS, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertEquals(
+            expected = 1,
+            actual = terms.size,
+            message = "trial-eligible plan must disclose post-trial price + cadence on the offer",
+        )
+    }
+
+    @Test
+    fun trial_terms_line_absent_when_no_trial_product() = runComposeUiTest {
+        setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalPayCraftConfig provides config()) {
+                    ProductList(
+                        products = listOf(monthlyProduct, annualProduct, lifetimeProduct),
+                        onPurchase = {},
+                        recommendedSku = "annual",
+                    )
+                }
+            }
+        }
+        val terms = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_TRIAL_TERMS, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertEquals(0, terms.size, "no trial → no per-plan trial-terms line")
+    }
+
+    @Test
+    fun trial_disclosure_states_cancellation() = runComposeUiTest {
+        setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalPayCraftConfig provides config()) {
+                    ProductList(
+                        products = sampleProducts,
+                        onPurchase = {},
+                        recommendedSku = "annual",
+                    )
+                }
+            }
+        }
+        // The disclosure block must tell users the trial auto-converts AND how to
+        // avoid the charge (cancel) — the third required policy term.
+        onNodeWithTag(PayCraftTestTags.TRIAL_BADGE).assertExists()
+        val cancelCopy = onAllNodesWithText("Cancel", substring = true, ignoreCase = true)
+            .fetchSemanticsNodes()
+        assertTrue(
+            cancelCopy.isNotEmpty(),
+            "trial disclosure must state how to cancel before being charged",
+        )
     }
 
     @Test

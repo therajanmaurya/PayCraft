@@ -184,6 +184,20 @@ data class PaywallDto(
     val successMessage: String = "You now have access to all premium features.",
     /** Post-purchase celebration sheet CTA label. */
     @SerialName("success_cta_label") val successCtaLabel: String = "Continue to app",
+    // ── Trial-terms disclosure (migration 077) ──────────────────────────
+    // Play Subscriptions policy requires the paywall to clearly state the trial
+    // length, the post-trial price + cadence, and how to cancel. These make that
+    // copy fully tenant-configurable from the dashboard. Empty string → the SDK
+    // falls back to its localized string-resource default (so an older tenant row
+    // or the Mock backend still renders a compliant disclosure). Substitution
+    // tokens the SDK replaces at render: `{days}` = trial length, `{price}` =
+    // formatted "price / interval" (e.g. "₹299 / month").
+    /** Per-plan trial-terms line, e.g. "{days}-day free trial, then {price}". Blank → SDK default. */
+    @SerialName("trial_terms_template") val trialTermsTemplate: String = "",
+    /** Trial disclosure block heading, e.g. "{days}-day free trial included". Blank → SDK default. */
+    @SerialName("trial_disclosure_title") val trialDisclosureTitle: String = "",
+    /** Trial disclosure body — the auto-renew + how-to-cancel legal line. Blank → SDK default. */
+    @SerialName("trial_disclosure_body") val trialDisclosureBody: String = "",
     /** Inline SVG path data for the hero icon. Sanitized server-side. */
     @SerialName("hero_icon_svg") val heroIconSvg: String? = null,
     /**

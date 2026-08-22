@@ -243,6 +243,48 @@ export function PaywallDesigner({
               </div>
             </details>
 
+            <details className="text-sm" open>
+              <summary className="cursor-pointer text-ink-600 font-medium select-none">
+                Free-trial disclosure (Google Play policy)
+              </summary>
+              <div className="space-y-3 mt-3 pl-2 border-l-2 border-ink-100">
+                <p className="text-[11px] text-ink-500">
+                  Google Play&apos;s Subscriptions policy requires trial terms to clearly state the
+                  post-trial price, when billing starts, and how to cancel. Tokens{" "}
+                  <code>{"{days}"}</code> (trial length) and <code>{"{price}"}</code> (e.g.
+                  &quot;₹299 / month&quot;) are substituted by the SDK at render.
+                </p>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-ink-600">Per-plan trial line</label>
+                  <input
+                    value={cfg.trial_terms_template}
+                    onChange={(e) => setCfg({ ...cfg, trial_terms_template: e.target.value })}
+                    placeholder="{days}-day free trial, then {price}"
+                    className="input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-ink-600">Disclosure title</label>
+                  <input
+                    value={cfg.trial_disclosure_title}
+                    onChange={(e) => setCfg({ ...cfg, trial_disclosure_title: e.target.value })}
+                    placeholder="{days}-day free trial included"
+                    className="input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-ink-600">Disclosure body</label>
+                  <textarea
+                    value={cfg.trial_disclosure_body}
+                    onChange={(e) => setCfg({ ...cfg, trial_disclosure_body: e.target.value })}
+                    placeholder="Your free trial converts to a paid subscription automatically when it ends. Cancel anytime before then to avoid being charged."
+                    rows={3}
+                    className="input"
+                  />
+                </div>
+              </div>
+            </details>
+
             <details className="text-sm">
               <summary className="cursor-pointer text-ink-600 font-medium select-none">
                 Hero icon (SVG path or URL)

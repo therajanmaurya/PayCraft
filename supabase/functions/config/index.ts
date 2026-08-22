@@ -316,6 +316,12 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
           success_title: "Welcome to Premium!",
           success_message: "You now have access to all premium features.",
           success_cta_label: "Continue to app",
+          // Trial-terms disclosure (migration 077) — defaults match the SDK strings.xml
+          // fallbacks so an un-configured tenant still ships a Play-compliant disclosure.
+          trial_terms_template: "{days}-day free trial, then {price}",
+          trial_disclosure_title: "{days}-day free trial included",
+          trial_disclosure_body:
+            "Your free trial converts to a paid subscription automatically when it ends. Cancel anytime before then in your store subscription settings to avoid being charged.",
         },
     locale: localeCountry,
     geo_country: geoCountry,

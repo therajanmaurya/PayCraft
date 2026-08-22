@@ -138,4 +138,15 @@
     <string name="paycraft_trial_banner_ends_in">Trial ends in %1$d days</string>
     <string name="paycraft_trial_banner_ends_today">Trial ends today</string>
     <string name="paycraft_plan_trial_description">%1$s plan with %2$d-day free trial, %3$s per %4$s after</string>
+
+    <!-- Trial terms disclosure (Play Subscriptions policy — trial terms must clearly state
+         the trial length, the post-trial price + cadence, and how to cancel; on the offer AND
+         near the CTA). These are the OFFLINE / back-compat FALLBACKS only — the dashboard
+         (PaywallDto.trial* fields) overrides them so the copy is fully tenant-configurable.
+         Placeholder tokens are substituted by the SDK: {days} = trial length,
+         {price} = pre-formatted "price / interval" e.g. "₹299 / month". Same token shape as
+         the dashboard templates so one substitution path serves both. -->
+    <string name="paycraft_trial_plan_terms">{days}-day free trial, then {price}</string>
+    <string name="paycraft_trial_disclosure_title">{days}-day free trial included</string>
+    <string name="paycraft_trial_disclosure_body">Your free trial converts to a paid subscription automatically when it ends. Cancel anytime before then in your store subscription settings to avoid being charged.</string>
 </resources>

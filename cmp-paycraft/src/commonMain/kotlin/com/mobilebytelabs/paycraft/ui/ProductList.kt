@@ -50,10 +50,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
 import com.mobilebytelabs.paycraft.config.PaywallDto
+import com.mobilebytelabs.paycraft.generated.resources.Res
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_trial_disclosure_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_trial_disclosure_title
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_trial_plan_terms
 import com.mobilebytelabs.paycraft.model.Money
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
 import com.mobilebytelabs.paycraft.ui.PayCraftTestTags as Tag
+import org.jetbrains.compose.resources.stringResource
 
 /**
  * First-class addressable plans surface — the paywall's product-list contract
@@ -119,16 +124,18 @@ fun ProductList(
         items.forEach { row ->
             ProductListItemRow(
                 row = row,
+                paywall = paywall,
                 onClick = { onPurchase(row.product.sku) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
 
-        // Trial badge + microcopy — visible when any product in the catalog is
-        // trial-eligible (a linked Product.Trial). Copy names the trial length so a
-        // buyer sees "7-day free trial included" not just "Trial ends soon".
+        // Trial disclosure — visible when any product in the catalog is trial-eligible
+        // (a linked Product.Trial). Names the trial length AND states the auto-renew +
+        // how-to-cancel terms (Play Subscriptions policy). Copy is dashboard-driven
+        // (PaywallDto.trial* fields) with a localized SDK fallback.
         if (trialEligibleRow != null) {
-            TrialEligibilityBadge(row = trialEligibleRow)
+            TrialEligibilityBadge(row = trialEligibleRow, paywall = paywall)
         }
 
         Spacer(Modifier.height(4.dp))
@@ -170,7 +177,12 @@ fun ProductList(
  * unit-test the row rendering without standing up the whole list.
  */
 @Composable
-private fun ProductListItemRow(row: ProductRow, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ProductListItemRow(
+    row: ProductRow,
+    paywall: PaywallDto,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val tokens = PayCraftTheme
     val secondary = row.formatSecondary()
 
@@ -241,6 +253,25 @@ private fun ProductListItemRow(row: ProductRow, onClick: () -> Unit, modifier: M
                         fontWeight = FontWeight.Medium,
                     )
                 }
+                // Play Subscriptions-policy disclosure — a trial-eligible plan names
+                // the post-trial price + cadence ON the offer itself ("14-day free
+                // trial, then ₹299 / month"), so a buyer sees what they'll be charged
+                // after the trial, not just that a trial exists. Missing this line is
+                // what got reels-downloader (version 33) rejected. Copy is dashboard-
+                // driven (paywall.trialTermsTemplate) with a localized SDK fallback.
+                if (row.isTrialEligible && row.trialDurationDays != null) {
+                    val template = paywall.trialTermsTemplate
+                        .ifBlank { stringResource(Res.string.paycraft_trial_plan_terms) }
+                    Text(
+                        text = template
+                            .replace("{days}", row.trialDurationDays.toString())
+                            .replace("{price}", secondary),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.accent,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.testTag(Tag.PRODUCT_LIST_TRIAL_TERMS),
+                    )
+                }
             }
         }
     }
@@ -270,25 +301,24 @@ private fun SavingsBadge(percent: Int, modifier: Modifier = Modifier) {
 }
 
 /**
- * Trial-eligibility badge + trial-end microcopy — surfaced above the CTA when
- * any product in the catalog is trial-eligible. Copy names the trial length
- * (from the linked [Product.Trial.durationDays]) so a buyer sees "7-day free
- * trial included" not "Trial ends soon".
+ * Trial-eligibility disclosure — surfaced above the CTA when any product in the
+ * catalog is trial-eligible. Names the trial length AND states the two remaining
+ * Play Subscriptions-policy terms: the trial auto-converts to a paid subscription
+ * when it ends, and how to cancel before then to avoid the charge. The per-plan
+ * price + cadence is disclosed on each plan card ([ProductListItemRow]); this
+ * block carries the auto-renew + cancellation terms that apply to whichever plan
+ * the buyer taps.
  */
 @Composable
-private fun TrialEligibilityBadge(row: ProductRow, modifier: Modifier = Modifier) {
+private fun TrialEligibilityBadge(row: ProductRow, paywall: PaywallDto, modifier: Modifier = Modifier) {
     val tokens = PayCraftTheme
     val trialDays = row.trialDurationDays ?: 0
-    val heading = if (trialDays > 0) {
-        "$trialDays-day free trial included"
-    } else {
-        "Free trial included"
-    }
-    val subheading = when {
-        trialDays >= 7 -> "Cancel anytime before day $trialDays — no charge."
-        trialDays >= 1 -> "Cancel any time during the trial — no charge."
-        else -> "Cancel any time — you'll only be billed once your trial ends."
-    }
+    val heading = paywall.trialDisclosureTitle
+        .ifBlank { stringResource(Res.string.paycraft_trial_disclosure_title) }
+        .replace("{days}", trialDays.toString())
+    val subheading = paywall.trialDisclosureBody
+        .ifBlank { stringResource(Res.string.paycraft_trial_disclosure_body) }
+        .replace("{days}", trialDays.toString())
     Row(
         modifier = modifier
             .fillMaxWidth()

@@ -1,16 +1,16 @@
 name: Zero-leak check (G-2)
 
 # Phase 2 T8 of paycraft-v2-production-readiness — runs the G-2 zero-leak
-# validator on every PR + push to development. Fails CI if any production
+# validator on every PR + push to dev. Fails CI if any production
 # code path still references the legacy `paycraft.cloud` domain (allowlist
 # at infra/zero-leak-check.sh — currently CHANGELOG.md v2.0 announcement
 # only).
 
 on:
   pull_request:
-    branches: [development, main]
+    branches: [dev, main]
   push:
-    branches: [development, main]
+    branches: [dev, main]
   workflow_dispatch:
 
 permissions:

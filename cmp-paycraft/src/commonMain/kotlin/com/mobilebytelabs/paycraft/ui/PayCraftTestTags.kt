@@ -79,6 +79,13 @@ object PayCraftTestTags {
     /** Tag on the trial-eligibility badge + microcopy shown above the CTA. */
     const val TRIAL_BADGE = "trial_badge"
 
+    /**
+     * Tag on the per-plan trial-terms line ("N-day free trial, then $X/interval")
+     * rendered under a trial-eligible plan card. Play Subscriptions-policy
+     * disclosure: names the post-trial price + billing cadence ON the offer itself.
+     */
+    const val PRODUCT_LIST_TRIAL_TERMS = "product_list_trial_terms"
+
     /** Tag on the single dominant paywall CTA button (ProductList.Continue). */
     const val PAYWALL_CTA = "paywall_cta"
 

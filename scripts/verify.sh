@@ -17,7 +17,7 @@
 #   ./scripts/verify.sh --local      # Maven Local publish gate
 #
 # Smart detection:
-#   - Compares HEAD against merge-base with origin/development
+#   - Compares HEAD against merge-base with origin/dev
 #   - Finds which cmp-* dirs have changed files
 #   - Builds/tests ONLY those modules → fast feedback on active work
 #   - If root config changed (build.gradle.kts, gradle/, settings.gradle.kts) → ALL modules
@@ -42,7 +42,7 @@ RESOLVED_MODULES=""
 # ── Smart Change Detection ──────────────────────────────────────────────────
 
 detect_changed_modules() {
-    local BASE_BRANCH="${BASE_BRANCH:-development}"
+    local BASE_BRANCH="${BASE_BRANCH:-dev}"
 
     local MERGE_BASE
     MERGE_BASE=$(git merge-base HEAD "origin/${BASE_BRANCH}" 2>/dev/null) \
@@ -380,7 +380,7 @@ resolve_and_show() {
     RESOLVED_MODULES=$(resolve_target_modules "$scope")
 
     if [ "$RESOLVED_MODULES" = "__NONE__" ]; then
-        echo -e "  ${BLUE}Smart:${NC} No changes detected vs origin/development"
+        echo -e "  ${BLUE}Smart:${NC} No changes detected vs origin/dev"
         echo -e "  ${BLUE}→${NC}     Nothing to build or test. Use ${BOLD}--all${NC} to force.\n"
         return 1
     fi

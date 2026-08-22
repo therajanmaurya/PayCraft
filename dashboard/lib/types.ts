@@ -104,6 +104,10 @@ export interface PaywallConfig {
   success_cta_label: string
   hero_icon_svg: string | null
   hero_icon_url: string | null
+  // trial disclosure (migration 077) — {days}/{price} tokens substituted by the SDK
+  trial_terms_template: string
+  trial_disclosure_title: string
+  trial_disclosure_body: string
 }
 
 export const PAYWALL_CONFIG_DEFAULTS: Omit<PaywallConfig, "tenant_id"> = {
@@ -128,6 +132,10 @@ export const PAYWALL_CONFIG_DEFAULTS: Omit<PaywallConfig, "tenant_id"> = {
   success_cta_label: "Continue to app",
   hero_icon_svg: null,
   hero_icon_url: null,
+  trial_terms_template: "{days}-day free trial, then {price}",
+  trial_disclosure_title: "{days}-day free trial included",
+  trial_disclosure_body:
+    "Your free trial converts to a paid subscription automatically when it ends. Cancel anytime before then in your store subscription settings to avoid being charged.",
 }
 
 /**
