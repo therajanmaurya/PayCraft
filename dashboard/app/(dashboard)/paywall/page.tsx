@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
 import { PageHeader } from "@/components/ui/page-header"

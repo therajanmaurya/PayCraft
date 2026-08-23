@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
 import { createClient } from "@/lib/supabase-server"
@@ -28,7 +30,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${DASHBOARD_URL}/providers/stripe?error=missing_params`)
   }
 
-  const verified = verifyState(state)
+  const verified = await verifyState(state)
   if (!verified) {
     return NextResponse.redirect(`${DASHBOARD_URL}/providers/stripe?error=invalid_state`)
   }

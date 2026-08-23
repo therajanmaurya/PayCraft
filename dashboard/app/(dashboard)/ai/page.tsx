@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { AiChat } from "@/components/ai-chat"
 
 export const metadata = { title: "PayCraft AI" }

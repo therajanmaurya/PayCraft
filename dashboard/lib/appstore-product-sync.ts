@@ -310,7 +310,7 @@ export async function syncProductToAppStore(
   /** Free-trial length in days (trial_enabled + trial_duration_days). 0/undefined → no intro offer. */
   trialDays?: number | null,
 ): Promise<AppStoreSyncResult> {
-  const token = appStoreConnectToken(creds)
+  const token = await appStoreConnectToken(creds)
   const wantsTrial = typeof trialDays === "number" && trialDays > 0
 
   const appId = await resolveAppId(token, creds.bundleId)

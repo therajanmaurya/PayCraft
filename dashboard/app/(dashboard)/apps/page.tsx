@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant, getUserApps } from "@/lib/tenant"

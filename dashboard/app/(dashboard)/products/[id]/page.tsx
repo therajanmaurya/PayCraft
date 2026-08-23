@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { ArrowLeft, Pencil, Tag, Globe } from "lucide-react"
 import { notFound } from "next/navigation"

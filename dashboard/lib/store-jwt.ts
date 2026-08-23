@@ -1,26 +1,19 @@
-import crypto from "node:crypto"
+import { importPKCS8, SignJWT } from "jose"
 
 /**
- * Node-side (dashboard) native-store token minting — dependency-free.
+ * Edge-native (dashboard) native-store token minting.
  *
- * The dashboard runs on Node, so unlike the Deno edge functions
- * (supabase/functions/_shared/{play,apple}-jwt.ts, which use jose from a
- * deno.land URL) we mint tokens with Node's built-in `crypto`. Both the
- * Google service-account RS256 assertion and the App Store Connect ES256
- * token are standard JWTs — no external library needed.
+ * Uses `jose` (Web Crypto under the hood) so this runs on BOTH Node and the
+ * Cloudflare edge runtime — same as the Deno edge functions
+ * (supabase/functions/_shared/{play,apple}-jwt.ts). The Google service-account
+ * RS256 assertion and the App Store Connect ES256 token are standard JWTs.
  *
- * These mirror the edge helpers 1:1 in intent (same grant, same audience,
- * same scope) but take PER-TENANT credentials as arguments — that is the whole
- * point of Phase 2: a tenant's OWN decrypted SA JSON / .p8 drives the token,
- * not a single platform-wide env credential.
+ * These take PER-TENANT credentials as arguments — a tenant's OWN decrypted SA
+ * JSON / .p8 drives the token, not a single platform-wide env credential.
  *
  * SECURITY: credentials are used only to sign locally / exchange for a token.
  * Nothing here logs or returns the private key material.
  */
-
-function b64url(input: Buffer | string): string {
-  return Buffer.from(input).toString("base64url")
-}
 
 // ── Google Play — service-account access token (androidpublisher) ──────────
 
@@ -36,7 +29,6 @@ const ANDROID_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublishe
  * Exchange a service-account RS256 assertion for a short-lived Play Developer
  * API access token, per
  * https://developers.google.com/identity/protocols/oauth2/service-account
- * (same flow as the edge play-jwt.ts, in Node).
  */
 export async function playAccessToken(sa: PlayServiceAccountJson): Promise<string> {
   if (!sa.client_email || !sa.private_key) {
@@ -45,20 +37,14 @@ export async function playAccessToken(sa: PlayServiceAccountJson): Promise<strin
   const tokenUri = sa.token_uri ?? "https://oauth2.googleapis.com/token"
   const now = Math.floor(Date.now() / 1000)
 
-  const header = { alg: "RS256", typ: "JWT" }
-  const claim = {
-    iss: sa.client_email,
-    scope: ANDROID_PUBLISHER_SCOPE,
-    aud: tokenUri,
-    iat: now,
-    exp: now + 3600,
-  }
-  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claim))}`
-  const signature = crypto
-    .createSign("RSA-SHA256")
-    .update(signingInput)
-    .sign(sa.private_key)
-  const assertion = `${signingInput}.${b64url(signature)}`
+  const key = await importPKCS8(sa.private_key, "RS256")
+  const assertion = await new SignJWT({ scope: ANDROID_PUBLISHER_SCOPE })
+    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
+    .setIssuer(sa.client_email)
+    .setAudience(tokenUri)
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(key)
 
   const res = await fetch(tokenUri, {
     method: "POST",
@@ -90,29 +76,20 @@ export interface AppStoreConnectCreds {
  * https://developer.apple.com/documentation/appstoreconnectapi/generating_tokens_for_api_requests
  *
  * NOTE: this is the App Store CONNECT API token (aud "appstoreconnect-v1",
- * no `bid` claim) used to manage subscriptions/products — subtly different from
- * the App Store SERVER API token minted by the edge apple-jwt.ts (which adds a
- * `bid` claim for transaction lookups). Apple caps ASC API tokens at 20 min.
- *
- * Node's ECDSA sign() returns DER by default; JOSE needs raw R||S, so we pass
- * dsaEncoding: "ieee-p1363".
+ * no `bid` claim). Apple caps ASC API tokens at 20 min. `jose` ECDSA emits raw
+ * R||S (JOSE format) — exactly what Apple expects (no DER conversion needed).
  */
-export function appStoreConnectToken(creds: AppStoreConnectCreds): string {
+export async function appStoreConnectToken(creds: AppStoreConnectCreds): Promise<string> {
   if (!creds.keyId || !creds.issuerId || !creds.privateKeyP8) {
     throw new Error("store-jwt: App Store Connect creds missing keyId/issuerId/privateKeyP8")
   }
   const now = Math.floor(Date.now() / 1000)
-  const header = { alg: "ES256", kid: creds.keyId, typ: "JWT" }
-  const claim = {
-    iss: creds.issuerId,
-    iat: now,
-    exp: now + 60 * 15, // 15 min — inside Apple's 20-min ASC-API cap
-    aud: "appstoreconnect-v1",
-  }
-  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claim))}`
-  const signature = crypto
-    .createSign("SHA256")
-    .update(signingInput)
-    .sign({ key: creds.privateKeyP8, dsaEncoding: "ieee-p1363" })
-  return `${signingInput}.${b64url(signature)}`
+  const key = await importPKCS8(creds.privateKeyP8, "ES256")
+  return new SignJWT({})
+    .setProtectedHeader({ alg: "ES256", kid: creds.keyId, typ: "JWT" })
+    .setIssuer(creds.issuerId)
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60 * 15) // 15 min — inside Apple's 20-min ASC-API cap
+    .setAudience("appstoreconnect-v1")
+    .sign(key)
 }

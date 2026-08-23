@@ -1,8 +1,10 @@
+export const runtime = "edge"
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
 import { captureKeyRotated } from "@/lib/telemetry"
-import crypto from "crypto"
+import { randomHex } from "@/lib/edge-crypto"
 
 export async function POST(req: NextRequest) {
   const { tenant, userId } = await requireTenant()
@@ -11,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "mode_required" }, { status: 400 })
   }
   const supabase = createClient()
-  const newKey = `pk_${mode}_${crypto.randomBytes(24).toString("hex")}`
+  const newKey = `pk_${mode}_${randomHex(24)}`
   const column = mode === "test" ? "api_key_test" : "api_key_live"
   const tsColumn = mode === "test" ? "api_key_test_rotated_at" : "api_key_live_rotated_at"
   const oldKey = mode === "test" ? tenant.api_key_test : tenant.api_key_live

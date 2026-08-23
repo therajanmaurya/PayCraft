@@ -1,5 +1,7 @@
+export const runtime = "edge"
+
 import { NextRequest, NextResponse } from "next/server"
-import crypto from "crypto"
+import { randomHex } from "@/lib/edge-crypto"
 import { createClient } from "@supabase/supabase-js"
 import { createClient as createServerSupabase } from "@/lib/supabase-server"
 
@@ -30,14 +32,10 @@ export async function POST(req: NextRequest) {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  const apiKeyTest =
-    "pk_test_" + crypto.randomBytes(24).toString("hex")
-  const apiKeyLive =
-    "pk_live_" + crypto.randomBytes(24).toString("hex")
-  const webhookSecretTest =
-    "whsec_test_" + crypto.randomBytes(24).toString("hex")
-  const webhookSecretLive =
-    "whsec_live_" + crypto.randomBytes(24).toString("hex")
+  const apiKeyTest = "pk_test_" + randomHex(24)
+  const apiKeyLive = "pk_live_" + randomHex(24)
+  const webhookSecretTest = "whsec_test_" + randomHex(24)
+  const webhookSecretLive = "whsec_live_" + randomHex(24)
 
   const { data: tenant, error: tenantErr } = await admin
     .from("tenants")

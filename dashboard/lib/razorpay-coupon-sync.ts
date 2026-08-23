@@ -1,4 +1,4 @@
-import Razorpay from "razorpay"
+import type { RazorpayRestClient } from "./razorpay-rest"
 import { createClient } from "./supabase-server"
 import { getConnectedRazorpayClient } from "./razorpay-client"
 
@@ -26,7 +26,7 @@ export async function syncCouponToRazorpay(opts: {
     return { razorpayOfferId: opts.existingRazorpayOfferId }
   }
 
-  let client: Razorpay
+  let client: RazorpayRestClient
   try {
     client = await getConnectedRazorpayClient(opts.tenantId, "live")
   } catch {

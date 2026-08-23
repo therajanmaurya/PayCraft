@@ -50,7 +50,7 @@ LEDGER="$PAYCRAFT_SRC/infra/deploy/.deploy-ledger.jsonl"
 mkdir -p "$STATE_DIR"
 
 PROD_URL="https://paycraft.mobilebytesensei.com"
-CF_WORKER_NAME="paycraft-dashboard"
+CF_PAGES_PROJECT="paycraft"   # Cloudflare Pages project (next-on-pages, edge runtime + nodejs_compat)
 GITHUB_REPO="MobileByteLabs/PayCraft"
 SUPABASE_REF="mlwfgytjxlqyfxcgpysm"
 
@@ -239,7 +239,7 @@ phase_2_secrets_sync() {
         if ! bash "$FW_ROOT/core/scripts/secrets-get.sh" "$alias" --to-file "$vf" 2>/dev/null || [[ ! -s "$vf" ]]; then
             echo "  ⚠ $env ← $alias : not in vault (skipped — nullable)"; skipped=$((skipped+1)); rm -f "$vf"; continue
         fi
-        if ( cd "$PAYCRAFT_SRC/dashboard" && npx --yes wrangler secret put "$env" --name "$CF_WORKER_NAME" < "$vf" >/dev/null 2>&1 ); then
+        if ( cd "$PAYCRAFT_SRC/dashboard" && npx --yes wrangler pages secret put "$env" --project-name "$CF_PAGES_PROJECT" < "$vf" >/dev/null 2>&1 ); then
             echo "  ✓ $env ← $alias"; set=$((set+1))
         else
             echo "  ✗ $env ← $alias : wrangler secret put failed (token Workers-scope? Worker exists?)"; failed=$((failed+1))
@@ -522,17 +522,17 @@ phase_5_deploy_cloudflare() {
     } >> "$ep"
     echo "  ✓ Prod build-time env materialized → .env.production.local (public NEXT_PUBLIC_* from vault)"
 
-    echo "  Building + deploying dashboard → Cloudflare Workers (OpenNext)…"
-    [[ -d "$dash/node_modules" ]] || ( cd "$dash" && npm install --no-audit --no-fund >/dev/null 2>&1 )
+    echo "  Building + deploying dashboard → Cloudflare Pages (next-on-pages, edge)…"
+    [[ -d "$dash/node_modules" ]] || ( cd "$dash" && npm install --no-audit --no-fund --legacy-peer-deps >/dev/null 2>&1 )
     if ( cd "$dash" \
           && CLOUDFLARE_ACCOUNT_ID="$(cat "$tmpd/acct")" \
              CLOUDFLARE_API_TOKEN="$(cat "$tmpd/tok")" \
-             npm run cf:deploy ); then
-        echo "  ✓ Dashboard deployed to Cloudflare Workers (paycraft-dashboard)"
+             npm run pages:deploy ); then
+        echo "  ✓ Dashboard deployed to Cloudflare Pages ($CF_PAGES_PROJECT → https://$CF_PAGES_PROJECT.pages.dev)"
         echo "$PROD_URL" > "$STATE_DIR/last-deploy-url"
         return 0
     fi
-    echo "  ✗ cf:deploy failed — check wrangler output above (token Workers-scope? build error?)"
+    echo "  ✗ pages:deploy failed — check next-on-pages/wrangler output above (edge-runtime on all routes? nodejs_compat set? token Pages-scope?)"
     return 1
 }
 

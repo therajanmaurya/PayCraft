@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { cookies } from "next/headers"
 import { Sidebar } from "@/components/sidebar"
 import { AiBubble } from "@/components/ai-bubble"

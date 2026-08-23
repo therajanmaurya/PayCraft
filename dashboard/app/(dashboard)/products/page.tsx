@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { Package, Plus, Zap, DollarSign, Clock, Database, ArrowRight, Webhook } from "lucide-react"
 import { createClient } from "@/lib/supabase-server"

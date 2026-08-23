@@ -1,10 +1,10 @@
-import Razorpay from "razorpay"
+import { razorpayRest, type RazorpayRestClient } from "@/lib/razorpay-rest"
 import { createClient } from "@/lib/supabase-server"
 
 export async function getConnectedRazorpayClient(
   tenantId: string,
   mode: "test" | "live" = "live",
-): Promise<Razorpay> {
+): Promise<RazorpayRestClient> {
   const supabase = createClient()
   const { data, error } = await supabase
     .rpc("tenant_providers_decrypt_key", {
@@ -20,5 +20,5 @@ export async function getConnectedRazorpayClient(
     )
   }
 
-  return new Razorpay({ key_id: data.key_id!, key_secret: data.secret_key })
+  return razorpayRest(data.key_id!, data.secret_key)
 }

@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { Inbox, Smartphone } from "lucide-react"
 import { createClient } from "@/lib/supabase-server"

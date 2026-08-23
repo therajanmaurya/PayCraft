@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { captureRateLimitHit } from "@/lib/telemetry"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
 export const dynamic = "force-dynamic"
 
 interface TicketPayload {
