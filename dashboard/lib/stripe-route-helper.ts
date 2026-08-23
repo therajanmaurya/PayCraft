@@ -251,6 +251,11 @@ export async function googlePlaySyncProduct(
       amountCents: p.amountCents,
     }))
 
+    // Free-trial length drives a FREE_TRIAL offer on the base plan so the Play
+    // cart actually grants the trial the paywall advertises (Subscriptions policy).
+    const trialDays =
+      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+
     const result = await syncProductToGooglePlay(
       { serviceAccountJson: decrypted.credential, packageName },
       productId,
@@ -259,6 +264,7 @@ export async function googlePlaySyncProduct(
       body.interval ?? null,
       prices,
       existingPlayProductId,
+      trialDays,
     )
 
     await supabase.rpc("tenant_products_set_store_ids", {
@@ -275,6 +281,15 @@ export async function googlePlaySyncProduct(
         warning:
           result.activationError ??
           "synced, but the Play base plan is still DRAFT — publish the app on Play (upload an APK/AAB), then re-sync to activate it",
+      }
+    }
+    // Base plan is live but the trial offer isn't — the paywall would advertise a
+    // trial the cart can't grant. Surface it so the operator fixes it before ship.
+    if (trialDays > 0 && result.trialOfferActivated === false) {
+      return {
+        warning:
+          result.trialOfferError ??
+          `base plan is live but the ${trialDays}-day free-trial offer is still DRAFT — re-sync after the app is published to activate it`,
       }
     }
     return {}
