@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
-import {
-  stripeSyncProduct,
-  razorpaySyncProduct,
-  cashfreeSyncProduct,
-  googlePlaySyncProduct,
-  appStoreSyncProduct,
-} from "@/lib/stripe-route-helper"
+import { runProductSync } from "@/lib/stripe-route-helper"
 
 export async function POST(req: NextRequest) {
   const { tenant, userId } = await requireTenant()
@@ -42,27 +36,12 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Best-effort multi-provider sync (all run concurrently). Each self-skips when
-  // the tenant hasn't connected that provider, and NEVER throws to us (internally
-  // caught). We AWAIT them and return a per-provider summary so the operator can
-  // SEE whether a product — and its free-trial offer — actually provisioned to
-  // Google Play / App Store / Stripe (integrity for the "auto-sync trials" flow),
-  // rather than silently discarding the result. Store-provider failures/DRAFTs are
-  // exactly the Subscriptions-policy mismatch that gets a build rejected.
-  const [, , , googleR, appstoreR] = await Promise.all([
-    stripeSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    razorpaySyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    cashfreeSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    googlePlaySyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    appStoreSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-  ])
+  // Immediate, durable multi-provider sync. runProductSync marks the product
+  // `syncing` up front (so a tab-close mid-run stays retryable — "save for later"),
+  // fans out to every provider (base product + free-trial offer), and records the
+  // per-provider outcome so the dashboard can show success/failure and offer a
+  // retry with the real server reason. Never throws (all provider errors captured).
+  const summary = await runProductSync(supabase, { tenantId: tenant.id, productId: id, body })
 
-  // Only surface providers that report status (the native stores — Google Play +
-  // App Store — where a trial must be provisioned as a store offer). Stripe/
-  // Razorpay/Cashfree log internally today; their status is a follow-up.
-  const sync: Record<string, { error?: string; warning?: string }> = {}
-  if (googleR && (googleR.error || googleR.warning)) sync.google_play = googleR
-  if (appstoreR && appstoreR.error) sync.app_store = appstoreR
-
-  return NextResponse.json({ id, sync })
+  return NextResponse.json({ id, sync_status: summary.status, providers: summary.providers })
 }

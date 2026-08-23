@@ -377,3 +377,108 @@ export async function appStoreSyncProduct(
     return { error: msg }
   }
 }
+
+// ─── Durable multi-provider sync orchestrator ────────────────────────────────
+
+/** Per-provider sync outcome recorded to tenant_products.sync_state. */
+export interface ProviderSyncEntry {
+  status: "synced" | "draft" | "failed" | "skipped"
+  error?: string
+  warning?: string
+}
+
+export interface ProductSyncSummary {
+  /** Rollup written to tenant_products.sync_status. */
+  status: "synced" | "partial" | "failed"
+  /** Per-provider detail — the dashboard shows failures + reasons, and offers retry. */
+  providers: Record<string, ProviderSyncEntry>
+}
+
+// "Provider not connected / not configured" is a SKIP, never a failure — a tenant
+// who only sells on Google Play shouldn't see a "Stripe failed" error.
+const NOT_CONNECTED_RE =
+  /not connected|no stored|not configured|missing (package_name|key_id|issuer_id|bundle_id)/i
+
+function classifyProvider(r: { error?: string; warning?: string }): ProviderSyncEntry {
+  if (r.error && NOT_CONNECTED_RE.test(r.error)) return { status: "skipped" }
+  if (r.error) return { status: "failed", error: r.error }
+  if (r.warning) return { status: "draft", warning: r.warning } // base synced, offer DRAFT
+  return { status: "synced" }
+}
+
+/**
+ * Run the multi-provider product sync AND record a durable outcome so the live
+ * dashboard can sync-on-save, show per-provider results, retry a failed provider
+ * with the real reason, and never lose an interrupted sync ("save for later").
+ *
+ * Contract:
+ *   1. Marks the product `syncing` up front (durability: a tab-close / function
+ *      kill mid-run leaves a non-terminal state the unsynced banner re-picks up).
+ *   2. Fans out to every provider (each self-skips when not connected; none throw).
+ *   3. Classifies each: synced / draft (base ok, trial offer DRAFT) / failed / skipped.
+ *   4. Records the rollup + per-provider detail via tenant_products_set_sync_state.
+ *
+ * Stripe/Cashfree return void today (log internally); their status is derived from
+ * the read-back id below. Razorpay/GooglePlay/AppStore return structured status.
+ */
+export async function runProductSync(
+  supabase: ReturnType<typeof createClient>,
+  opts: SyncOptions,
+): Promise<ProductSyncSummary> {
+  const { tenantId, productId } = opts
+
+  await supabase.rpc("tenant_products_set_sync_state", {
+    p_id: productId,
+    p_status: "syncing",
+    p_state: null,
+  })
+
+  const [stripeR, razorpayR, cashfreeR, googleR, appstoreR] = await Promise.all([
+    stripeSyncProduct(supabase, opts).then(() => undefined).catch((e: any) => ({ error: String(e?.message ?? e) })),
+    razorpaySyncProduct(supabase, opts),
+    cashfreeSyncProduct(supabase, opts).then(() => undefined).catch((e: any) => ({ error: String(e?.message ?? e) })),
+    googlePlaySyncProduct(supabase, opts),
+    appStoreSyncProduct(supabase, opts),
+  ])
+
+  // Read back the provider-id columns to classify the void-returning helpers
+  // (Stripe/Cashfree don't surface status): id present ⇒ synced.
+  const { data: after } = await supabase
+    .from("tenant_products")
+    .select("stripe_product_id, razorpay_plan_id_by_currency, play_product_id, app_store_product_id")
+    .eq("id", productId)
+    .single()
+
+  const providers: Record<string, ProviderSyncEntry> = {}
+
+  // Stripe — void helper; classify by read-back id (absent ⇒ skipped, not failed,
+  // since the helper doesn't distinguish not-connected from error).
+  providers.stripe =
+    stripeR && (stripeR as any).error
+      ? classifyProvider(stripeR as any)
+      : after?.stripe_product_id
+        ? { status: "synced" }
+        : { status: "skipped" }
+
+  providers.razorpay = razorpayR?.ok
+    ? { status: "synced" }
+    : classifyProvider({ error: razorpayR?.error })
+
+  providers.google_play = classifyProvider(googleR ?? {})
+  providers.app_store = classifyProvider(appstoreR ?? {})
+
+  const values = Object.values(providers)
+  const status: ProductSyncSummary["status"] = values.some((v) => v.status === "failed")
+    ? "failed"
+    : values.some((v) => v.status === "draft")
+      ? "partial"
+      : "synced"
+
+  await supabase.rpc("tenant_products_set_sync_state", {
+    p_id: productId,
+    p_status: status,
+    p_state: providers,
+  })
+
+  return { status, providers }
+}

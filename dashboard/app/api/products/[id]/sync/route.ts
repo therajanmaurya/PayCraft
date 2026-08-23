@@ -195,6 +195,26 @@ export async function POST(
     appStoreReport.message = e?.message ?? String(e)
   }
 
+  // Record durable per-provider sync state (migration 078) so an interrupted or
+  // failed sync is resumable from the unsynced banner and its reason is shown.
+  const toEntry = (r: Report) => ({
+    status: r.status === "ok" ? "synced" : r.status, // ok→synced; failed/skipped as-is
+    ...(r.message ? (r.status === "failed" ? { error: r.message } : { warning: r.message }) : {}),
+  })
+  const providerState = {
+    stripe: toEntry(stripeReport),
+    razorpay: toEntry(razorpayReport),
+    cashfree: toEntry(cashfreeReport),
+    google_play: toEntry(googlePlayReport),
+    app_store: toEntry(appStoreReport),
+  }
+  const rollup = Object.values(providerState).some((v) => v.status === "failed") ? "failed" : "synced"
+  await supabase.rpc("tenant_products_set_sync_state", {
+    p_id: params.id,
+    p_status: rollup,
+    p_state: providerState,
+  })
+
   await supabase.rpc("audit_log_emit", {
     p_tenant_id: tenant.id,
     p_actor_user_id: userId,
