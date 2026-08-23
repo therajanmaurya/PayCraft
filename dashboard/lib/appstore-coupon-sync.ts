@@ -1,6 +1,6 @@
 import { createClient } from "./supabase-server"
 import { appStoreConnectToken, type AppStoreConnectCreds } from "./store-jwt"
-import { ascFetch } from "./appstore-product-sync"
+import { ascFetch, resolveAscSubscriptionId } from "./appstore-product-sync"
 
 /**
  * Apply a PayCraft coupon (percent_off) to a tenant's App Store subscriptions as
@@ -52,7 +52,8 @@ export async function syncCouponToAppStore(opts: {
     .rpc("tenant_providers_decrypt_store_key", { p_tenant_id: opts.tenantId, p_provider: "app_store" })
     .single<{ credential: string | null; config: Record<string, any> }>()
   const cfg = decrypted?.config ?? {}
-  if (!decrypted?.credential || !cfg.key_id || !cfg.issuer_id) return null
+  if (!decrypted?.credential || !cfg.key_id || !cfg.issuer_id || !cfg.bundle_id) return null
+  const bundleId = cfg.bundle_id as string
 
   const creds: AppStoreConnectCreds = {
     keyId: cfg.key_id,
@@ -91,9 +92,16 @@ export async function syncCouponToAppStore(opts: {
 
   const offerIdsByProduct: Record<string, string> = {}
   for (const prod of products) {
-    const subId = prod.app_store_product_id as string
     const baseCents = usdByProduct.get(prod.id)
     if (!baseCents) continue // no USD price to discount against
+
+    // Resolve the ASC RESOURCE id from the stored product reference id — the
+    // pricePoints / introductoryOffers endpoints 404 on the reference name.
+    const subId = await resolveAscSubscriptionId(token, bundleId, prod.app_store_product_id as string)
+    if (!subId) {
+      console.warn(`[appstore-coupon-sync] could not resolve ASC subscription for ${prod.app_store_product_id}`)
+      continue
+    }
     const targetUsd = Math.max(0.01, (baseCents * (1 - opts.percentOff / 100)) / 100)
 
     // Resolve the nearest USA price point to the discounted amount.

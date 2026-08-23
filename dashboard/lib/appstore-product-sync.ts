@@ -225,6 +225,27 @@ async function findSubscription(
 }
 
 /**
+ * Resolve the ASC subscription RESOURCE id (opaque, e.g. "6443…") from the
+ * stored product REFERENCE id (e.g. "com.app.promonthly"). The ASC API paths
+ * (pricePoints, introductoryOffers) key off the resource id, not the reference
+ * — a coupon/offer sync MUST resolve it first or every call 404s. Returns null
+ * when the app / group / subscription can't be found (best-effort callers skip).
+ */
+export async function resolveAscSubscriptionId(
+  token: string,
+  bundleId: string,
+  productId: string,
+): Promise<string | null> {
+  try {
+    const appId = await resolveAppId(token, bundleId)
+    const groupId = await ensureSubscriptionGroup(token, appId)
+    return await findSubscription(token, groupId, productId)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Best-effort price set: resolve the closest available price point to the
  * desired base amount for the USD territory, and create a subscriptionPrice
  * only when none is set yet. Apple does not accept arbitrary amounts.
