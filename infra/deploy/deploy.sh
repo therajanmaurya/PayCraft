@@ -11,17 +11,17 @@
 #             L4 LOCAL READY WAIT  poll localhost:3000 until 200
 #             L5 LOCAL SMOKE       curl /api/health (expects env=local)
 #
-#   --prod    Promote dev → main and let Vercel auto-deploy production
-#             1 PRE-FLIGHT     verify CLIs/vault/vercel/gh; warn on un-pushed dev commits;
+#   --prod    Promote dev → main, then DIRECTLY deploy the dashboard to Cloudflare Workers
+#             1 PRE-FLIGHT     verify CLIs/vault/cloudflare/gh; warn on un-pushed dev commits;
 #                              TYPECHECK the dashboard (tsc --noEmit) so a broken build never
 #                              reaches main (--skip-build to bypass)
-#             2 SECRETS SYNC   vault → vercel env (production scope)
+#             2 SECRETS SYNC   vault → Cloudflare Worker secrets (best-effort; see phase note)
 #             3 MIGRATIONS     detect pending (db push --dry-run) → DESTRUCTIVE-op scan (gated by
 #                              --allow-destructive) → pre-push schema BACKUP → supabase db push →
 #                              POST-PUSH VERIFY (0 pending). Aborts the chain on any failure.
 #             3.5 FUNCTIONS DEPLOY  vault-mediated supabase functions deploy (Edge Functions)
-#             4 PROMOTE        open PR dev → main, merge it (fast-forward)
-#             5 WAIT VERCEL    poll Vercel API for production deploy of main → READY (aborts on ERROR)
+#             4 PROMOTE        open PR dev → main, merge it (fast-forward) — source-of-truth replica
+#             5 DEPLOY CLOUDFLARE  build + `npm run cf:deploy` → dashboard on Cloudflare Workers (OpenNext)
 #             6 SMOKE          curl /api/health + /auth/login + root + Edge Function /config reachability
 #
 # Dry-run by default — pass --apply --confirm-production for mutating prod phases. Dry-run still
@@ -230,9 +230,23 @@ phase_1_preflight() {
 }
 
 phase_2_secrets_sync() {
+    # Runtime secrets → Cloudflare Worker secrets (migrated off Vercel 2026-08-23).
+    # The framework tool pulls each runtime alias from the vault and `wrangler secret
+    # put`s it on the paycraft-dashboard Worker.
+    # NOTE: the alias→Worker-env NAME mapping for this app is still being finalized
+    # (the dashboard reads NEXT_PUBLIC_SUPABASE_URL / STRIPE_SECRET_KEY / POSTMARK_
+    # SERVER_TOKEN / … which differ from the vault env_var names). Until that mapping
+    # lands this phase is BEST-EFFORT (warns, never blocks the deploy) so phase 5 can
+    # still ship; set the Worker secrets via the Cloudflare dashboard in the meantime.
     local flag=""
     [[ "$APPLY" = "true" ]] && flag="--apply"
-    bash "$PAYCRAFT_SRC/infra/sync-to-vercel.sh" $flag --env production
+    if [[ -f "$FW_ROOT/core/scripts/secrets-sync-to-cloudflare.sh" ]]; then
+        bash "$FW_ROOT/core/scripts/secrets-sync-to-cloudflare.sh" $flag \
+            --worker paycraft-dashboard --cwd "$PAYCRAFT_SRC/dashboard" \
+            || echo "  ⚠ Worker secret sync incomplete (alias→env mapping pending) — set runtime secrets manually; deploy continues"
+    else
+        echo "  ↷ secrets-sync-to-cloudflare.sh not found — skipping (set Worker secrets manually)"
+    fi
 }
 
 phase_3_migrations() {
@@ -468,58 +482,37 @@ This PR is fast-forward-only — main is kept as an exact replica of dev at prom
 }
 
 # Phase 5 — poll Vercel API until the deploy of the latest main commit is READY
-phase_5_wait_vercel() {
+# Phase 5 — DIRECT deploy the dashboard to Cloudflare Workers (OpenNext).
+# Migrated off Vercel auto-deploy (2026-08-23): the dashboard runs on Cloudflare
+# Workers via @opennextjs/cloudflare, so prod deploy is a direct build+push we own
+# — no waiting on an external CI/Vercel webhook. `npm run cf:deploy` =
+# `opennextjs-cloudflare build && … deploy` (reads CLOUDFLARE_ACCOUNT_ID +
+# CLOUDFLARE_API_TOKEN, pulled SV32-safe from the vault).
+phase_5_deploy_cloudflare() {
+    local dash="$PAYCRAFT_SRC/dashboard"
     if [[ "$APPLY" != "true" ]]; then
-        echo "  [DRY] would poll Vercel API for production deploy of latest main commit"
+        echo "  [DRY] would build + deploy dashboard → Cloudflare Workers (npm run cf:deploy)"
         return 0
     fi
+    command -v npx >/dev/null 2>&1 || { echo "  ✗ node/npx required for cf:deploy"; return 1; }
+    [[ -f "$dash/wrangler.jsonc" ]] || { echo "  ✗ $dash/wrangler.jsonc missing (Cloudflare not configured)"; return 1; }
 
-    cd "$PAYCRAFT_SRC"
-    git fetch origin main 2>/dev/null
-    local target_sha
-    target_sha=$(git rev-parse origin/main | cut -c1-7)
-    echo "  Waiting for Vercel production deploy of commit ${target_sha}..."
+    # Pull Cloudflare creds from the vault (SV32-safe; tmpfiles shredded on return).
+    local tmpd; tmpd=$(mktemp -d); trap 'rm -rf "$tmpd" 2>/dev/null' RETURN
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias mbs-cloudflare-account-id      --to-file "$tmpd/acct" 2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-account-id"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias mbs-cloudflare-pages-api-token --to-file "$tmpd/tok"  2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-pages-api-token"; return 1; }
 
-    local start=$(date +%s)
-    local deadline=$((start + 15*60))   # 15-min cap (Vercel queue can stall on parallel failed previews)
-    local last_state=""
-    while [[ $(date +%s) -lt $deadline ]]; do
-        local raw
-        raw=$(vercel_api "/v6/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_TEAM_ID}&limit=5&target=production" 2>/dev/null)
-        local match
-        match=$(node -e "
-            const j = JSON.parse(\`${raw//\`/\\\`}\`);
-            const d = (j.deployments || []).find(d => {
-                const sha = (d.meta?.githubCommitSha || d.meta?.gitCommitSha || '').slice(0,7);
-                return sha === '${target_sha}';
-            });
-            if (d) console.log(JSON.stringify({id: d.uid, state: d.state, url: d.url, inspector: d.inspectorUrl}));
-        " 2>/dev/null)
-        if [[ -n "$match" ]]; then
-            local state url inspector
-            state=$(echo "$match" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf-8')).state)")
-            url=$(echo "$match" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf-8')).url)")
-            inspector=$(echo "$match" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf-8')).inspector)")
-            if [[ "$state" != "$last_state" ]]; then
-                printf "  [%4ds] state=%-10s url=%s\n" "$(($(date +%s)-start))" "$state" "$url"
-                last_state="$state"
-            fi
-            case "$state" in
-                READY)
-                    echo "  ✓ Production deploy READY"
-                    echo "    Inspector: $inspector"
-                    echo "    URL:       https://$url"
-                    echo "$url" > "$STATE_DIR/last-deploy-url"
-                    return 0 ;;
-                ERROR|CANCELED|BLOCKED)
-                    echo "  ✗ Production deploy ended in $state"
-                    echo "    Inspector: $inspector"
-                    return 1 ;;
-            esac
-        fi
-        sleep 8
-    done
-    echo "  ✗ Timeout (10 min) waiting for Vercel production deploy"
+    echo "  Building + deploying dashboard → Cloudflare Workers (OpenNext)…"
+    [[ -d "$dash/node_modules" ]] || ( cd "$dash" && npm install --no-audit --no-fund >/dev/null 2>&1 )
+    if ( cd "$dash" \
+          && CLOUDFLARE_ACCOUNT_ID="$(cat "$tmpd/acct")" \
+             CLOUDFLARE_API_TOKEN="$(cat "$tmpd/tok")" \
+             npm run cf:deploy ); then
+        echo "  ✓ Dashboard deployed to Cloudflare Workers (paycraft-dashboard)"
+        echo "$PROD_URL" > "$STATE_DIR/last-deploy-url"
+        return 0
+    fi
+    echo "  ✗ cf:deploy failed — check wrangler output above (token Workers-scope? build error?)"
     return 1
 }
 
@@ -638,7 +631,7 @@ emit_status() {
         case "$n" in
             1) name="PRE-FLIGHT" ;; 2) name="SECRETS SYNC" ;;
             3) name="MIGRATIONS" ;; 3.5) name="FUNCTIONS DEPLOY" ;;
-            4) name="PROMOTE" ;; 5) name="WAIT VERCEL" ;; 6) name="SMOKE" ;;
+            4) name="PROMOTE" ;; 5) name="DEPLOY CLOUDFLARE" ;; 6) name="SMOKE" ;;
         esac
         local marker="$STATE_DIR/phase-$n.done"
         if [[ -f "$marker" ]]; then
@@ -819,7 +812,7 @@ run_phase 2   "SECRETS SYNC"     "phase_2_secrets_sync"  || exit 1
 run_phase 3   "MIGRATIONS"       "phase_3_migrations"    || exit 1
 run_phase 3.5 "FUNCTIONS DEPLOY" "phase_3_5_functions"   || exit 1
 run_phase 4   "PROMOTE"          "phase_4_promote"       || exit 1
-run_phase 5   "WAIT VERCEL"      "phase_5_wait_vercel"   || exit 1
+run_phase 5   "DEPLOY CLOUDFLARE" "phase_5_deploy_cloudflare" || exit 1
 run_phase 6   "SMOKE"            "phase_6_smoke"         || exit 1
 
 banner "PayCraft Deploy — done in $(($(date -u +%s) - START_TS))s"
@@ -828,3 +821,5 @@ echo "  Live: $PROD_URL"
 printf '{"ts":"%s","env":"production","status":"success","duration_s":%d,"apply":%s,"main_sha":"%s"}\n' \
     "$(date -u +%FT%TZ)" "$(($(date -u +%s) - START_TS))" "$APPLY" \
     "$(git -C $PAYCRAFT_SRC rev-parse --short origin/main 2>/dev/null)" >> "$LEDGER"
+
+# cloudflare-deploy wired via /paycraft-deploy phase 5 (2026-08-23)

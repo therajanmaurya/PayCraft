@@ -38,26 +38,25 @@ echo "─── Phase 1: PRE-FLIGHT ──────────────�
 check "Active project = mbs/PayCraft" \
     "[ \"\$(bash ${FW_ROOT}/core/scripts/session-resolve.sh)\" = mbs/PayCraft ]"
 
-# 2. CLIs
-check "Vercel CLI installed" "command -v vercel"
-check "Vercel CLI logged in" "vercel whoami"
+# 2. CLIs — dashboard deploys to Cloudflare Workers (wrangler via npx), not Vercel.
+# wrangler auth uses the CLOUDFLARE_API_TOKEN pulled from the vault at deploy time,
+# so there's no separate "logged in" hard-fail here.
+check "npx available (for wrangler)" "command -v npx"
 check "Supabase CLI installed" "command -v supabase"
 check "GitHub CLI installed"  "command -v gh"
 check "GitHub CLI logged in"  "gh auth status"
 check "Node v20+ available"   "[ \"\$(node --version | sed 's/v//' | cut -d. -f1)\" -ge 20 ]"
 check "jq available"          "command -v jq"
 
-# 3. Vercel project linked (project.json present)
-check "Vercel project linked (dashboard)" \
-    "[ -f ${PAYCRAFT_SRC}/dashboard/.vercel/project.json ]"
+# 3. Cloudflare Workers configured (wrangler.jsonc present)
+check "Cloudflare Worker configured (dashboard)" \
+    "[ -f ${PAYCRAFT_SRC}/dashboard/wrangler.jsonc ]"
 
-# 4. Vault — 5 required secrets for the GitHub-integrated flow
+# 4. Vault — required secrets for the Cloudflare deploy flow
 SECRETS=(
-    mbs-paycraft-encryption-key
-    mbs-paycraft-resend-api-key
-    mbs-paycraft-vercel-token
-    mbs-paycraft-vercel-org-id
-    mbs-paycraft-vercel-project-id
+    paycraft-encryption-key
+    mbs-cloudflare-account-id
+    mbs-cloudflare-pages-api-token
 )
 MISSING=()
 for a in "${SECRETS[@]}"; do
