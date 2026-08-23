@@ -49,9 +49,8 @@ STATE_DIR="$PAYCRAFT_SRC/infra/deploy/.state"
 LEDGER="$PAYCRAFT_SRC/infra/deploy/.deploy-ledger.jsonl"
 mkdir -p "$STATE_DIR"
 
-VERCEL_PROJECT_ID="prj_HQ7IQe4XyxFk3SU0dV6X3n2n7kme"
-VERCEL_TEAM_ID="team_yIBRq8fQTksr6aM3K27PgCgI"
 PROD_URL="https://paycraft.mobilebytesensei.com"
+CF_WORKER_NAME="paycraft-dashboard"
 GITHUB_REPO="MobileByteLabs/PayCraft"
 SUPABASE_REF="mlwfgytjxlqyfxcgpysm"
 
@@ -156,27 +155,8 @@ run_phase() {
     fi
 }
 
-# vercel API helper — uses cached CLI auth (~/Library/Application Support/com.vercel.cli/auth.json)
-vercel_api() {
-    local path="$1" method="${2:-GET}" body="${3:-}"
-    local token
-    token=$(node -e "console.log(JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(), 'Library/Application Support/com.vercel.cli/auth.json'),'utf-8')).token)" 2>/dev/null) || return 1
-    if [[ -n "$body" ]]; then
-        node -e "
-          fetch('https://api.vercel.com${path}', {
-            method: '${method}',
-            headers: { 'Authorization': 'Bearer ${token}', 'Content-Type': 'application/json' },
-            body: ${body}
-          }).then(r=>r.text()).then(t=>console.log(t));
-        "
-    else
-        node -e "
-          fetch('https://api.vercel.com${path}', {
-            headers: { 'Authorization': 'Bearer ${token}' }
-          }).then(r=>r.text()).then(t=>console.log(t));
-        "
-    fi
-}
+# (Vercel removed 2026-08-23 — dashboard deploys to Cloudflare Workers; the old
+#  vercel_api helper + VERCEL_* project vars are gone.)
 
 # ═══════════════════════════════════════════════════════════
 # Phase implementations
@@ -571,21 +551,18 @@ emit_status() {
     echo ""
 
     echo "─── prereqs ────────────────────────────────────────"
-    printf "cli_vercel:    %s\n"   "$(command -v vercel >/dev/null && echo INSTALLED || echo MISSING)"
+    printf "cli_wrangler:  %s\n"   "$(command -v npx >/dev/null && echo AVAILABLE || echo MISSING)"
     printf "cli_supabase:  %s\n"   "$(command -v supabase >/dev/null && echo INSTALLED || echo MISSING)"
     printf "cli_gh:        %s\n"   "$(command -v gh >/dev/null && echo INSTALLED || echo MISSING)"
-    printf "auth_vercel:   %s\n"   "$(vercel whoami 2>/dev/null || echo NOT-LOGGED-IN)"
     printf "auth_gh:       %s\n"   "$(gh auth status 2>&1 | grep -oE 'Logged in to github.com as [^ ]+' | head -1 || echo NOT-LOGGED-IN)"
-    printf "link_vercel:   %s\n"   "$([ -f $PAYCRAFT_SRC/dashboard/.vercel/project.json ] && echo LINKED || echo NOT-LINKED)"
+    printf "cf_worker_cfg: %s\n"   "$([ -f $PAYCRAFT_SRC/dashboard/wrangler.jsonc ] && echo CONFIGURED || echo MISSING)"
     echo ""
 
-    echo "─── vault (6 secrets — BYOK + framework-supabase) ───"
+    echo "─── vault (Cloudflare deploy + framework-supabase) ──"
     local SECRETS=(
-        mbs-paycraft-encryption-key
-        mbs-paycraft-resend-api-key
-        mbs-paycraft-vercel-token
-        mbs-paycraft-vercel-org-id
-        mbs-paycraft-vercel-project-id
+        paycraft-encryption-key
+        mbs-cloudflare-account-id
+        mbs-cloudflare-pages-api-token
         framework-supabase-personal-access-token
     )
     local total=0 present=0 missing=()

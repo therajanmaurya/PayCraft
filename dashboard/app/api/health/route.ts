@@ -57,8 +57,8 @@ export async function GET() {
     {
       status: allOk ? "ok" : "degraded",
       service: "paycraft-dashboard",
-      version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "dev",
-      env: process.env.VERCEL_ENV ?? "local",
+      version: process.env.CF_VERSION_METADATA_ID?.slice(0, 7) ?? "dev",
+      env: process.env.NEXT_PUBLIC_APP_ENV ?? "local",
       timestamp: new Date().toISOString(),
       duration_ms: Date.now() - startedAt,
       checks,

@@ -57,8 +57,8 @@ import com.mobilebytelabs.paycraft.generated.resources.paycraft_trial_plan_terms
 import com.mobilebytelabs.paycraft.model.Money
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
-import com.mobilebytelabs.paycraft.ui.PayCraftTestTags as Tag
 import org.jetbrains.compose.resources.stringResource
+import com.mobilebytelabs.paycraft.ui.PayCraftTestTags as Tag
 
 /**
  * First-class addressable plans surface — the paywall's product-list contract
