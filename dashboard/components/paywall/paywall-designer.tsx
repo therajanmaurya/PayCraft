@@ -252,7 +252,10 @@ export function PaywallDesigner({
                   Google Play&apos;s Subscriptions policy requires trial terms to clearly state the
                   post-trial price, when billing starts, and how to cancel. Tokens{" "}
                   <code>{"{days}"}</code> (trial length) and <code>{"{price}"}</code> (e.g.
-                  &quot;₹299 / month&quot;) are substituted by the SDK at render.
+                  &quot;₹299 / month&quot;) are substituted by the SDK at render. Keep{" "}
+                  <code>{"{price}"}</code> in the per-plan line — if you remove it (or mistype a
+                  token) the SDK falls back to its built-in compliant copy so the post-trial price
+                  is never dropped.
                 </p>
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-ink-600">Per-plan trial line</label>

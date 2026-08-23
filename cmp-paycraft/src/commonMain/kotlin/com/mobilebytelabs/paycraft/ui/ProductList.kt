@@ -260,12 +260,14 @@ private fun ProductListItemRow(
                 // what got reels-downloader (version 33) rejected. Copy is dashboard-
                 // driven (paywall.trialTermsTemplate) with a localized SDK fallback.
                 if (row.isTrialEligible && row.trialDurationDays != null) {
-                    val template = paywall.trialTermsTemplate
-                        .ifBlank { stringResource(Res.string.paycraft_trial_plan_terms) }
                     Text(
-                        text = template
-                            .replace("{days}", row.trialDurationDays.toString())
-                            .replace("{price}", secondary),
+                        text = resolveTrialCopy(
+                            template = paywall.trialTermsTemplate,
+                            fallback = stringResource(Res.string.paycraft_trial_plan_terms),
+                            days = row.trialDurationDays,
+                            price = secondary,
+                            requirePrice = true,
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = tokens.colors.accent,
                         fontWeight = FontWeight.SemiBold,
@@ -313,12 +315,20 @@ private fun SavingsBadge(percent: Int, modifier: Modifier = Modifier) {
 private fun TrialEligibilityBadge(row: ProductRow, paywall: PaywallDto, modifier: Modifier = Modifier) {
     val tokens = PayCraftTheme
     val trialDays = row.trialDurationDays ?: 0
-    val heading = paywall.trialDisclosureTitle
-        .ifBlank { stringResource(Res.string.paycraft_trial_disclosure_title) }
-        .replace("{days}", trialDays.toString())
-    val subheading = paywall.trialDisclosureBody
-        .ifBlank { stringResource(Res.string.paycraft_trial_disclosure_body) }
-        .replace("{days}", trialDays.toString())
+    val heading = resolveTrialCopy(
+        template = paywall.trialDisclosureTitle,
+        fallback = stringResource(Res.string.paycraft_trial_disclosure_title),
+        days = trialDays,
+        price = null,
+        requirePrice = false,
+    )
+    val subheading = resolveTrialCopy(
+        template = paywall.trialDisclosureBody,
+        fallback = stringResource(Res.string.paycraft_trial_disclosure_body),
+        days = trialDays,
+        price = null,
+        requirePrice = false,
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -357,6 +367,46 @@ private fun TrialEligibilityBadge(row: ProductRow, paywall: PaywallDto, modifier
             )
         }
     }
+}
+
+// ─── Trial-copy token resolution (fail-safe) ─────────────────────────────────
+
+/**
+ * Matches any `{token}` placeholder left unresolved after substitution. Google Play
+ * rejects paywalls that render literal/broken placeholders (the single most common
+ * trial-offer rejection cause), so a malformed tenant template must NEVER reach the UI.
+ */
+private val UNRESOLVED_TRIAL_TOKEN = Regex("\\{[A-Za-z_]+}")
+
+/**
+ * Resolve a dashboard-configured trial-copy [template] against the SDK-default [fallback],
+ * substituting `{days}` and (optionally) `{price}`. Fail-safe for Play compliance:
+ *
+ *  - when [requirePrice] is set (the per-plan line), a tenant [template] that DROPS
+ *    `{price}` — so the post-trial cost would silently vanish, the exact reels-downloader
+ *    rejection — is rejected in favor of [fallback]. `{days}` is optional there because
+ *    the disclosure block also states the duration;
+ *  - if the chosen string still contains an unresolved `{token}` after substitution
+ *    (a tenant typo like `{prices}`), the fully-resolved [fallback] wins;
+ *  - the SDK [fallback] always carries the correct tokens, so the returned string is
+ *    guaranteed placeholder-free and carries the required post-trial terms.
+ */
+internal fun resolveTrialCopy(
+    template: String,
+    fallback: String,
+    days: Int,
+    price: String?,
+    requirePrice: Boolean,
+): String {
+    fun String.substitute(): String {
+        var s = replace("{days}", days.toString())
+        if (price != null) s = s.replace("{price}", price)
+        return s
+    }
+    val tenantUsable = template.isNotBlank() && (!requirePrice || template.contains("{price}"))
+    val chosen = if (tenantUsable) template else fallback
+    val resolved = chosen.substitute()
+    return if (UNRESOLVED_TRIAL_TOKEN.containsMatchIn(resolved)) fallback.substitute() else resolved
 }
 
 // ─── Internal display-model helpers ──────────────────────────────────────────

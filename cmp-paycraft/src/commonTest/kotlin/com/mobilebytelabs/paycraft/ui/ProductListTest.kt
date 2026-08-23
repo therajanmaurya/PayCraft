@@ -377,6 +377,72 @@ class ProductListTest {
         assertEquals(1, recommended.size, "popularPlanSku=annual → exactly one recommended card")
     }
 
+    // ─── Trial-copy fail-safe (Play: no unresolved/blank placeholders) ────
+    // Google Play's single most common trial-offer rejection is a paywall that
+    // renders a literal/broken placeholder or omits the post-trial price. A
+    // dashboard-configured template must never produce either — resolveTrialCopy
+    // falls back to the guaranteed-correct SDK default.
+
+    @Test
+    fun trial_copy_honors_valid_tenant_template() {
+        val out = resolveTrialCopy(
+            template = "Trial: {days} days, renews at {price}",
+            fallback = "{days}-day free trial, then {price}",
+            days = 7,
+            price = "$9.99 / month",
+            requirePrice = true,
+        )
+        assertEquals("Trial: 7 days, renews at $9.99 / month", out)
+    }
+
+    @Test
+    fun trial_copy_falls_back_when_tenant_template_drops_price_token() {
+        val out = resolveTrialCopy(
+            template = "{days}-day free trial", // missing {price} → post-trial cost would vanish
+            fallback = "{days}-day free trial, then {price}",
+            days = 14,
+            price = "₹299 / month",
+            requirePrice = true,
+        )
+        assertEquals("14-day free trial, then ₹299 / month", out)
+        assertTrue(out.contains("₹299 / month"), "post-trial price must survive the fallback")
+    }
+
+    @Test
+    fun trial_copy_falls_back_when_tenant_template_has_broken_token() {
+        val out = resolveTrialCopy(
+            template = "{days}-day trial, then {prices}", // typo'd token
+            fallback = "{days}-day free trial, then {price}",
+            days = 7,
+            price = "$9.99 / month",
+            requirePrice = true,
+        )
+        assertTrue(!out.contains("{"), "no literal placeholder may reach the UI (Play rejection)")
+        assertTrue(out.contains("$9.99 / month"), "fallback restores the post-trial price")
+    }
+
+    @Test
+    fun trial_copy_body_allows_no_token_and_guards_typos() {
+        // Body has no required token; a plain tenant string is honored verbatim.
+        val plain = resolveTrialCopy(
+            template = "Cancel anytime in Settings before the trial ends.",
+            fallback = "default body",
+            days = 7,
+            price = null,
+            requirePrice = false,
+        )
+        assertEquals("Cancel anytime in Settings before the trial ends.", plain)
+        // …but a stray unresolved token falls back to the SDK default.
+        val broken = resolveTrialCopy(
+            template = "Cancel before {da ys} — oops {bonus}",
+            fallback = "default body",
+            days = 7,
+            price = null,
+            requirePrice = false,
+        )
+        assertEquals("default body", broken)
+    }
+
     // ─── buildProductRows unit sanity ─────────────────────────────────────
 
     @Test
