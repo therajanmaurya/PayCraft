@@ -21,14 +21,22 @@ async function checkSupabase(): Promise<HealthCheck> {
       .select("id", { count: "exact", head: true })
       .limit(1)
     if (error) {
-      return { name: "supabase", ok: false, detail: error.message, duration_ms: Date.now() - start }
+      const detail =
+        error.message ||
+        [error.code, error.details, error.hint].filter(Boolean).join(" | ") ||
+        JSON.stringify(error)
+      console.error("[health] supabase query error:", detail, error)
+      return { name: "supabase", ok: false, detail, duration_ms: Date.now() - start }
     }
     return { name: "supabase", ok: true, duration_ms: Date.now() - start }
   } catch (e) {
+    const detail =
+      e instanceof Error ? `${e.name}: ${e.message}` : JSON.stringify(e) || String(e)
+    console.error("[health] supabase threw:", detail, e)
     return {
       name: "supabase",
       ok: false,
-      detail: e instanceof Error ? e.message : String(e),
+      detail,
       duration_ms: Date.now() - start,
     }
   }

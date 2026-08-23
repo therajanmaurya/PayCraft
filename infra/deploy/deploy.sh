@@ -504,6 +504,24 @@ phase_5_deploy_cloudflare() {
     bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias mbs-cloudflare-account-id      --to-file "$tmpd/acct" 2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-account-id"; return 1; }
     bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias mbs-cloudflare-pages-api-token --to-file "$tmpd/tok"  2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-pages-api-token"; return 1; }
 
+    # CRITICAL: Next.js INLINES every `process.env.NEXT_PUBLIC_*` at BUILD time.
+    # A developer's `.env.local` (local Supabase http://127.0.0.1:54321) would bake
+    # LOCAL urls into the PROD Worker bundle → runtime Supabase calls hit 127.0.0.1
+    # and fail instantly. So materialize the PROD public values from the vault into
+    # `.env.production.local` (Next precedence: .env.production.local > .env.local)
+    # right before the build. Gitignored via dashboard/.gitignore `.env*.local`.
+    local ep="$dash/.env.production.local"
+    : > "$ep"; chmod 600 "$ep"
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias framework-supabase-url      --to-file "$tmpd/sburl" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-url"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias framework-supabase-anon-key --to-file "$tmpd/sbanon" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-anon-key"; return 1; }
+    {
+        printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n'          "$(cat "$tmpd/sburl")"
+        printf 'NEXT_PUBLIC_PAYCRAFT_SUPABASE_URL=%s\n' "$(cat "$tmpd/sburl")"
+        printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n'     "$(cat "$tmpd/sbanon")"
+        printf 'NEXT_PUBLIC_PAYCRAFT_DASHBOARD_URL=%s\n' "https://paycraft.mobilebytesensei.com"
+    } >> "$ep"
+    echo "  ✓ Prod build-time env materialized → .env.production.local (public NEXT_PUBLIC_* from vault)"
+
     echo "  Building + deploying dashboard → Cloudflare Workers (OpenNext)…"
     [[ -d "$dash/node_modules" ]] || ( cd "$dash" && npm install --no-audit --no-fund >/dev/null 2>&1 )
     if ( cd "$dash" \
