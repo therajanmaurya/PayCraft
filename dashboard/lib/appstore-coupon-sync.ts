@@ -39,7 +39,7 @@ export async function syncCouponToAppStore(opts: {
   duration: "once" | "repeating" | "forever"
   durationInMonths: number | null
   appliesToProductIds: string[] | null
-}): Promise<{ offerIdsByProduct: Record<string, string> } | null> {
+}): Promise<{ offerIdsByProduct: Record<string, string>; skipped?: string[] } | null> {
   const supabase = createClient()
 
   // 1. App Store connected + decrypt the .p8 + issuer/key ids.
@@ -91,15 +91,16 @@ export async function syncCouponToAppStore(opts: {
     opts.duration === "once" ? 1 : opts.duration === "repeating" ? opts.durationInMonths ?? 1 : OFFER_PERIOD_CAP
 
   const offerIdsByProduct: Record<string, string> = {}
+  const errors: string[] = []
   for (const prod of products) {
     const baseCents = usdByProduct.get(prod.id)
-    if (!baseCents) continue // no USD price to discount against
+    if (!baseCents) { errors.push(`${prod.app_store_product_id}: no USD price`); continue }
 
     // Resolve the ASC RESOURCE id from the stored product reference id — the
     // pricePoints / introductoryOffers endpoints 404 on the reference name.
     const subId = await resolveAscSubscriptionId(token, bundleId, prod.app_store_product_id as string)
     if (!subId) {
-      console.warn(`[appstore-coupon-sync] could not resolve ASC subscription for ${prod.app_store_product_id}`)
+      errors.push(`${prod.app_store_product_id}: could not resolve ASC subscription`)
       continue
     }
     const targetUsd = Math.max(0.01, (baseCents * (1 - opts.percentOff / 100)) / 100)
@@ -121,13 +122,20 @@ export async function syncCouponToAppStore(opts: {
       if (delta < bestDelta) { bestDelta = delta; best = point }
     }
 
-    // Idempotent-ish: skip if a non-free intro offer already exists for this sub.
+    // Apple permits only ONE introductory offer per subscription. If ANY intro
+    // offer already exists (typically the FREE_TRIAL created for this product),
+    // a coupon intro offer would 409 (STATE_ERROR) — skip it. Discounting a
+    // subscription that also has a trial needs an Apple *promotional* offer
+    // (a separate, signed-at-purchase mechanism) — noted as a follow-up.
     const listRes = await ascFetch(token, `/v1/subscriptions/${subId}/introductoryOffers?limit=20`)
     if (listRes.ok) {
-      const has = ((await listRes.json()).data ?? []).some(
-        (o: any) => o?.attributes?.offerMode === "PAY_AS_YOU_GO",
-      )
-      if (has) { offerIdsByProduct[prod.id] = `${subId}-pay-as-you-go`; continue }
+      const existing = (await listRes.json()).data ?? []
+      if (existing.length > 0) {
+        const payg = existing.find((o: any) => o?.attributes?.offerMode === "PAY_AS_YOU_GO")
+        if (payg) offerIdsByProduct[prod.id] = payg.id
+        else errors.push(`${subId}: skipped — an introductory offer (trial) already occupies the single intro-offer slot`)
+        continue
+      }
     }
 
     const createRes = await ascFetch(token, `/v1/subscriptionIntroductoryOffers`, {
@@ -152,9 +160,7 @@ export async function syncCouponToAppStore(opts: {
       }),
     })
     if (!createRes.ok) {
-      console.error(
-        `[appstore-coupon-sync] introductoryOffers.create failed for ${subId} (${createRes.status}): ${(await createRes.text()).slice(0, 200)}`,
-      )
+      errors.push(`${subId}: create ${createRes.status} ${(await createRes.text()).replace(/\s+/g, " ").slice(0, 160)}`)
       continue
     }
     const created = await createRes.json()
@@ -167,7 +173,9 @@ export async function syncCouponToAppStore(opts: {
       .update({ appstore_offer_ids: offerIdsByProduct, updated_at: new Date().toISOString() })
       .eq("id", opts.couponRowId)
   }
-  return { offerIdsByProduct }
+  // Skips (e.g. trial already occupies the single intro-offer slot) are expected
+  // platform constraints — record them, never fail the sync.
+  return { offerIdsByProduct, skipped: errors }
 }
 
 export async function syncCouponBestEffort(args: Parameters<typeof syncCouponToAppStore>[0]) {

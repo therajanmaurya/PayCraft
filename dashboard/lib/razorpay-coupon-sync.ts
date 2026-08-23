@@ -72,7 +72,9 @@ export async function syncCouponToRazorpay(opts: {
     const resp = await (client as any).offers.create(payload)
     offerId = resp.id
   } catch (e: any) {
-    console.error("[razorpay-coupon-sync] offers.create failed:", e?.error?.description ?? e.message)
+    // Razorpay Offers are dashboard-managed (the API returns 405 for create), so
+    // a coupon can't be pushed as a Razorpay offer programmatically — skip, not fail.
+    console.warn("[razorpay-coupon-sync] offers.create unsupported:", e?.message ?? e)
     return null
   }
 

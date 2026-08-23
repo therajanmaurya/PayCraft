@@ -49,7 +49,7 @@ export async function syncCouponToGooglePlay(opts: {
   duration: "once" | "repeating" | "forever"
   durationInMonths: number | null
   appliesToProductIds: string[] | null
-}): Promise<{ offerIdsByProduct: Record<string, string> } | null> {
+}): Promise<{ offerIdsByProduct: Record<string, string>; skipped?: string[] } | null> {
   const supabase = createClient()
 
   // 1. Google Play connected + decrypt the service-account credential.
@@ -102,10 +102,11 @@ export async function syncCouponToGooglePlay(opts: {
 
   // 3. One discount offer per applicable product.
   const offerIdsByProduct: Record<string, string> = {}
+  const errors: string[] = []
   for (const prod of applicable) {
-    if (prod.prices.length === 0) continue
+    if (prod.prices.length === 0) { errors.push(`${prod.playProductId}: no prices`); continue }
     const regions = resolveRegions(prod.prices)
-    if (regions.length === 0) continue
+    if (regions.length === 0) { errors.push(`${prod.playProductId}: no mappable regions`); continue }
 
     // region → discounted price (first price per region wins, same collapse as base plan)
     const discountByRegion = new Map<string, { currency: string; cents: number }>()
@@ -155,13 +156,11 @@ export async function syncCouponToGooglePlay(opts: {
         { method: "POST", body: JSON.stringify(offerBody) },
       )
       if (!createRes.ok) {
-        console.error(
-          `[googleplay-coupon-sync] offers.create failed for ${prod.playProductId} (${createRes.status}): ${shortPlayError(await createRes.text())}`,
-        )
+        errors.push(`${prod.playProductId}: create ${createRes.status} ${shortPlayError(await createRes.text())}`)
         continue
       }
     } else if (!getRes.ok) {
-      console.error(`[googleplay-coupon-sync] offers.get failed for ${prod.playProductId} (${getRes.status})`)
+      errors.push(`${prod.playProductId}: get ${getRes.status}`)
       continue
     }
 
@@ -180,7 +179,9 @@ export async function syncCouponToGooglePlay(opts: {
       .update({ googleplay_offer_ids: offerIdsByProduct, updated_at: new Date().toISOString() })
       .eq("id", opts.couponRowId)
   }
-  return { offerIdsByProduct }
+  // Some products legitimately can't take the discount (e.g. a deep % puts a
+  // region's price below Play's floor) — record as skipped, never fail the sync.
+  return { offerIdsByProduct, skipped: errors }
 }
 
 export async function syncCouponBestEffort(args: Parameters<typeof syncCouponToGooglePlay>[0]) {
