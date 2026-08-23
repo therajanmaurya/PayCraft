@@ -31,6 +31,19 @@ type Product = {
   razorpay_plan_id_by_currency: Record<string, string> | null
   play_product_id: string | null
   app_store_product_id: string | null
+  // Durable provider-sync state (migration 078).
+  sync_status: "pending" | "syncing" | "synced" | "partial" | "failed" | null
+  sync_state: Record<string, { status: string; error?: string; warning?: string }> | null
+}
+
+/** First human-readable failure/DRAFT reason across providers, for the badge tooltip. */
+function firstSyncReason(state: Product["sync_state"]): string | null {
+  if (!state) return null
+  for (const [provider, s] of Object.entries(state)) {
+    if (s?.error) return `${provider}: ${s.error}`
+    if (s?.warning) return `${provider}: ${s.warning}`
+  }
+  return null
 }
 
 function formatMoney(cents: number, currency: string): string {
@@ -257,6 +270,24 @@ export default async function ProductsPage() {
                       )}
                       {r.type === "trial" && r.trial_duration_days && (
                         <span className="text-ink-400 text-xs">· {r.trial_duration_days}d</span>
+                      )}
+                      {r.sync_status && r.sync_status !== "synced" && (
+                        <span
+                          title={firstSyncReason(r.sync_state) ?? "Not yet synced to providers"}
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-tighter ${
+                            r.sync_status === "failed"
+                              ? "text-red-700 bg-red-50 border-red-100"
+                              : r.sync_status === "partial"
+                              ? "text-amber-700 bg-amber-50 border-amber-100"
+                              : "text-ink-500 bg-ink-100 border-ink-200"
+                          }`}
+                        >
+                          {r.sync_status === "partial"
+                            ? "trial DRAFT"
+                            : r.sync_status === "failed"
+                            ? "sync failed"
+                            : r.sync_status}
+                        </span>
                       )}
                     </div>
                   </td>
