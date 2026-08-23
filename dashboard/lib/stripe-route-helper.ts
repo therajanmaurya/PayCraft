@@ -30,12 +30,14 @@ function buildPriceInputs(body: Record<string, any>): PriceInput[] {
 }
 
 /**
- * Best-effort Stripe sync — failures are logged, never surface to the caller.
+ * Best-effort Stripe sync. Returns a STRUCTURED status so the durable sync-state
+ * layer can show precise per-provider results + reasons (not connected → skipped;
+ * real error → failed + reason; success → synced). Never throws.
  */
 export async function stripeSyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<void> {
+): Promise<{ ok?: boolean; skipped?: boolean; error?: string }> {
   const { tenantId, productId, body, existingStripeProductId, existingPrices } = opts
   try {
     // Unified status check — recognizes BOTH the OAuth Connect path and the
@@ -45,10 +47,10 @@ export async function stripeSyncProduct(
     const { data: connect, error: connectErr } = await supabase
       .rpc("tenant_stripe_provider_status", { p_tenant_id: tenantId })
       .single<{ source: string | null; account_id: string | null; livemode: boolean }>()
-    if (connectErr || !connect?.source) return
+    if (connectErr || !connect?.source) return { skipped: true }
 
     const prices = buildPriceInputs(body)
-    if (!prices.length) return
+    if (!prices.length) return { skipped: true }
 
     const trialDays =
       body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
@@ -80,8 +82,10 @@ export async function stripeSyncProduct(
         p_payment_links: result.paymentLinksByCurrency,
       }),
     ])
+    return { ok: true }
   } catch (e: any) {
     console.error("[products] stripe sync failed:", e.message)
+    return { error: e?.message ?? String(e) }
   }
 }
 
@@ -167,13 +171,13 @@ export async function razorpaySyncProduct(
 export async function cashfreeSyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<void> {
+): Promise<{ ok?: boolean; skipped?: boolean; error?: string }> {
   const { tenantId, productId, body } = opts
   try {
     const { data: status } = await supabase
       .rpc("tenant_providers_status", { p_tenant_id: tenantId, p_provider: "cashfree" })
       .single<{ test_key_id: string | null; live_key_id: string | null; connected: boolean }>()
-    if (!status?.connected) return
+    if (!status?.connected) return { skipped: true }
 
     const mode: "test" | "live" = status.live_key_id ? "live" : "test"
 
@@ -187,10 +191,10 @@ export async function cashfreeSyncProduct(
         p_mode: mode,
       })
       .single<{ secret_key: string; key_id: string }>()
-    if (!decrypted?.secret_key || !decrypted?.key_id) return
+    if (!decrypted?.secret_key || !decrypted?.key_id) return { skipped: true }
 
     const prices = buildPriceInputs(body)
-    if (!prices.length) return
+    if (!prices.length) return { skipped: true }
 
     const result = await syncProductToCashfree(
       tenantId,
@@ -203,7 +207,9 @@ export async function cashfreeSyncProduct(
       mode,
     )
 
-    if (Object.keys(result.paymentLinksByCurrency).length === 0) return
+    // Cashfree only supports one-time INR links today (subscriptions self-skip in
+    // syncProductToCashfree, returning no links) — that's a SKIP, not a failure.
+    if (Object.keys(result.paymentLinksByCurrency).length === 0) return { skipped: true }
 
     await supabase.rpc("tenant_providers_merge_payment_links", {
       p_tenant_id: tenantId,
@@ -212,8 +218,10 @@ export async function cashfreeSyncProduct(
       p_sku: body.sku,
       p_payment_links: result.paymentLinksByCurrency,
     })
+    return { ok: true }
   } catch (e: any) {
     console.error("[products] cashfree sync failed:", e.message)
+    return { error: e?.message ?? String(e) }
   }
 }
 
@@ -399,10 +407,21 @@ export interface ProductSyncSummary {
 const NOT_CONNECTED_RE =
   /not connected|no stored|not configured|missing (package_name|key_id|issuer_id|bundle_id)/i
 
-function classifyProvider(r: { error?: string; warning?: string }): ProviderSyncEntry {
+/**
+ * Normalize any provider helper's return into a ProviderSyncEntry. Handles the
+ * two shapes across the five helpers: {ok,skipped,error} (Stripe/Cashfree/Razorpay)
+ * and {error,warning} (Google Play/App Store). An explicit `skipped` OR a
+ * not-connected error → skipped; a `warning` (base synced, trial offer DRAFT) →
+ * draft; any other error → failed; otherwise synced.
+ */
+export function classifyProvider(
+  r: { ok?: boolean; skipped?: boolean; error?: string; warning?: string } | undefined,
+): ProviderSyncEntry {
+  if (!r) return { status: "skipped" }
+  if (r.skipped) return { status: "skipped" }
   if (r.error && NOT_CONNECTED_RE.test(r.error)) return { status: "skipped" }
   if (r.error) return { status: "failed", error: r.error }
-  if (r.warning) return { status: "draft", warning: r.warning } // base synced, offer DRAFT
+  if (r.warning) return { status: "draft", warning: r.warning }
   return { status: "synced" }
 }
 
@@ -418,14 +437,14 @@ function classifyProvider(r: { error?: string; warning?: string }): ProviderSync
  *   3. Classifies each: synced / draft (base ok, trial offer DRAFT) / failed / skipped.
  *   4. Records the rollup + per-provider detail via tenant_products_set_sync_state.
  *
- * Stripe/Cashfree return void today (log internally); their status is derived from
- * the read-back id below. Razorpay/GooglePlay/AppStore return structured status.
+ * Every helper now returns STRUCTURED status ({ok,skipped,error} or {error,warning}),
+ * so each provider's result is classified precisely — no read-back id inference.
  */
 export async function runProductSync(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
 ): Promise<ProductSyncSummary> {
-  const { tenantId, productId } = opts
+  const { productId } = opts
 
   await supabase.rpc("tenant_products_set_sync_state", {
     p_id: productId,
@@ -434,38 +453,20 @@ export async function runProductSync(
   })
 
   const [stripeR, razorpayR, cashfreeR, googleR, appstoreR] = await Promise.all([
-    stripeSyncProduct(supabase, opts).then(() => undefined).catch((e: any) => ({ error: String(e?.message ?? e) })),
+    stripeSyncProduct(supabase, opts),
     razorpaySyncProduct(supabase, opts),
-    cashfreeSyncProduct(supabase, opts).then(() => undefined).catch((e: any) => ({ error: String(e?.message ?? e) })),
+    cashfreeSyncProduct(supabase, opts),
     googlePlaySyncProduct(supabase, opts),
     appStoreSyncProduct(supabase, opts),
   ])
 
-  // Read back the provider-id columns to classify the void-returning helpers
-  // (Stripe/Cashfree don't surface status): id present ⇒ synced.
-  const { data: after } = await supabase
-    .from("tenant_products")
-    .select("stripe_product_id, razorpay_plan_id_by_currency, play_product_id, app_store_product_id")
-    .eq("id", productId)
-    .single()
-
-  const providers: Record<string, ProviderSyncEntry> = {}
-
-  // Stripe — void helper; classify by read-back id (absent ⇒ skipped, not failed,
-  // since the helper doesn't distinguish not-connected from error).
-  providers.stripe =
-    stripeR && (stripeR as any).error
-      ? classifyProvider(stripeR as any)
-      : after?.stripe_product_id
-        ? { status: "synced" }
-        : { status: "skipped" }
-
-  providers.razorpay = razorpayR?.ok
-    ? { status: "synced" }
-    : classifyProvider({ error: razorpayR?.error })
-
-  providers.google_play = classifyProvider(googleR ?? {})
-  providers.app_store = classifyProvider(appstoreR ?? {})
+  const providers: Record<string, ProviderSyncEntry> = {
+    stripe: classifyProvider(stripeR),
+    razorpay: classifyProvider(razorpayR),
+    cashfree: classifyProvider(cashfreeR),
+    google_play: classifyProvider(googleR),
+    app_store: classifyProvider(appstoreR),
+  }
 
   const values = Object.values(providers)
   const status: ProductSyncSummary["status"] = values.some((v) => v.status === "failed")
