@@ -42,10 +42,14 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Best-effort multi-provider sync (all run concurrently; failures are logged only).
-  // Web PSPs (Stripe/Razorpay/Cashfree) + native stores (Google Play / App Store)
-  // — each self-skips when the tenant hasn't connected that provider.
-  void Promise.all([
+  // Best-effort multi-provider sync (all run concurrently). Each self-skips when
+  // the tenant hasn't connected that provider, and NEVER throws to us (internally
+  // caught). We AWAIT them and return a per-provider summary so the operator can
+  // SEE whether a product — and its free-trial offer — actually provisioned to
+  // Google Play / App Store / Stripe (integrity for the "auto-sync trials" flow),
+  // rather than silently discarding the result. Store-provider failures/DRAFTs are
+  // exactly the Subscriptions-policy mismatch that gets a build rejected.
+  const [, , , googleR, appstoreR] = await Promise.all([
     stripeSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
     razorpaySyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
     cashfreeSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
@@ -53,5 +57,12 @@ export async function POST(req: NextRequest) {
     appStoreSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
   ])
 
-  return NextResponse.json({ id })
+  // Only surface providers that report status (the native stores — Google Play +
+  // App Store — where a trial must be provisioned as a store offer). Stripe/
+  // Razorpay/Cashfree log internally today; their status is a follow-up.
+  const sync: Record<string, { error?: string; warning?: string }> = {}
+  if (googleR && (googleR.error || googleR.warning)) sync.google_play = googleR
+  if (appstoreR && appstoreR.error) sync.app_store = appstoreR
+
+  return NextResponse.json({ id, sync })
 }

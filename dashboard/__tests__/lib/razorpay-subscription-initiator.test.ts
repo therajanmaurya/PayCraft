@@ -11,7 +11,7 @@
  * captured directly.
  */
 
-const subscriptionsCreate = jest.fn(async () => ({
+const subscriptionsCreate = jest.fn(async (_payload: Record<string, unknown>) => ({
   id: "sub_test123",
   short_url: "https://rzp.io/i/abc",
   status: "created",
