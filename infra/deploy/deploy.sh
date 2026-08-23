@@ -211,22 +211,44 @@ phase_1_preflight() {
 
 phase_2_secrets_sync() {
     # Runtime secrets → Cloudflare Worker secrets (migrated off Vercel 2026-08-23).
-    # The framework tool pulls each runtime alias from the vault and `wrangler secret
-    # put`s it on the paycraft-dashboard Worker.
-    # NOTE: the alias→Worker-env NAME mapping for this app is still being finalized
-    # (the dashboard reads NEXT_PUBLIC_SUPABASE_URL / STRIPE_SECRET_KEY / POSTMARK_
-    # SERVER_TOKEN / … which differ from the vault env_var names). Until that mapping
-    # lands this phase is BEST-EFFORT (warns, never blocks the deploy) so phase 5 can
-    # still ship; set the Worker secrets via the Cloudflare dashboard in the meantime.
-    local flag=""
-    [[ "$APPLY" = "true" ]] && flag="--apply"
-    if [[ -f "$FW_ROOT/core/scripts/secrets-sync-to-cloudflare.sh" ]]; then
-        bash "$FW_ROOT/core/scripts/secrets-sync-to-cloudflare.sh" $flag \
-            --worker paycraft-dashboard --cwd "$PAYCRAFT_SRC/dashboard" \
-            || echo "  ⚠ Worker secret sync incomplete (alias→env mapping pending) — set runtime secrets manually; deploy continues"
-    else
-        echo "  ↷ secrets-sync-to-cloudflare.sh not found — skipping (set Worker secrets manually)"
+    # Vault is the SoT: the 15 core runtime secrets already live in the mbs vault
+    # with real values (Vercel's prod env is type "Sensitive" = write-only, so it
+    # could never be the migration source). The AUTHORITATIVE alias→env-NAME mapping
+    # lives in dashboard/cloudflare-secrets.map (handles the dashboard reading names
+    # that differ from vault env_var fields + values needed under two names). We loop
+    # the map: pull each alias from the vault, `wrangler secret put` it under each
+    # env name. An alias that does not resolve (nullable, e.g. STRIPE_CONNECT_CLIENT_ID)
+    # is SKIPPED with a warning, never fatal.
+    local map="$PAYCRAFT_SRC/dashboard/cloudflare-secrets.map"
+    if [[ ! -f "$map" ]]; then
+        echo "  ↷ cloudflare-secrets.map not found — skipping (set Worker secrets via Cloudflare dashboard)"; return 0
     fi
+    if [[ "$APPLY" != "true" ]]; then
+        echo "  [DRY] would set these Worker secrets on $CF_WORKER_NAME (value from vault alias):"
+        sed -E 's/#.*//; /^[[:space:]]*$/d; s/[[:space:]]//g' "$map" | while IFS='=' read -r env alias; do
+            [[ -z "$env" || -z "$alias" ]] && continue
+            printf "        %-34s ← %s\n" "$env" "$alias"
+        done
+        return 0
+    fi
+    local set=0 skipped=0 failed=0
+    while IFS='=' read -r env alias; do
+        env="$(echo "$env" | tr -d '[:space:]')"; alias="$(echo "$alias" | tr -d '[:space:]')"
+        [[ -z "$env" || -z "$alias" || "$env" == \#* ]] && continue
+        local vf; vf=$(mktemp -t cf-sec-XXXXXX); chmod 600 "$vf"
+        if ! bash "$FW_ROOT/core/scripts/secrets-get.sh" "$alias" --to-file "$vf" 2>/dev/null || [[ ! -s "$vf" ]]; then
+            echo "  ⚠ $env ← $alias : not in vault (skipped — nullable)"; skipped=$((skipped+1)); rm -f "$vf"; continue
+        fi
+        if ( cd "$PAYCRAFT_SRC/dashboard" && npx --yes wrangler secret put "$env" --name "$CF_WORKER_NAME" < "$vf" >/dev/null 2>&1 ); then
+            echo "  ✓ $env ← $alias"; set=$((set+1))
+        else
+            echo "  ✗ $env ← $alias : wrangler secret put failed (token Workers-scope? Worker exists?)"; failed=$((failed+1))
+        fi
+        rm -f "$vf"
+    done < <(grep -vE '^\s*#' "$map")
+    echo "  Worker secrets — set: $set · skipped(nullable): $skipped · failed: $failed"
+    [[ "$failed" -eq 0 ]] || echo "  ⚠ some secrets failed — set them via Cloudflare dashboard; deploy continues"
+    return 0
 }
 
 phase_3_migrations() {

@@ -23,6 +23,7 @@
   // are set as Worker secrets, NOT committed here — `wrangler secret put` or the
   // Cloudflare dashboard. Only NON-secret vars belong in `vars`.
   "vars": {
-    "NEXT_PUBLIC_APP_ENV": "production"
+    "NEXT_PUBLIC_APP_ENV": "production",
+    "NEXT_PUBLIC_PAYCRAFT_DASHBOARD_URL": "https://paycraft.mobilebytesensei.com"
   }
 }
