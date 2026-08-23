@@ -119,6 +119,7 @@ supabase/migrations/*
 !supabase/migrations/077_tenant_paywall_trial_disclosure.sql
 !supabase/migrations/078_tenant_products_sync_state.sql
 !supabase/migrations/079_encryption_passphrase_prod_guard.sql
+!supabase/migrations/080_coupon_store_offer_ids.sql
 .vercel
 
 # Wrangler CLI cache (Cloudflare Workers)

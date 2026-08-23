@@ -153,7 +153,7 @@ function sanitizeAscProductId(bundleId: string, sku: string): string {
   return `${bundleId}.${tail || "product"}`.slice(0, 100)
 }
 
-async function ascFetch(
+export async function ascFetch(
   token: string,
   path: string,
   init: RequestInit = {},

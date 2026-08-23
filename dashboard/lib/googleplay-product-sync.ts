@@ -75,14 +75,14 @@ export interface GooglePlaySyncResult {
 
 // Minimal ISO-4217 currency → CLDR region map for the common PayCraft set.
 // Unmapped currencies are skipped (logged) rather than guessed.
-const CURRENCY_REGION: Record<string, string> = {
+export const CURRENCY_REGION: Record<string, string> = {
   USD: "US", INR: "IN", GBP: "GB", EUR: "DE", JPY: "JP", CAD: "CA",
   AUD: "AU", SGD: "SG", BRL: "BR", MXN: "MX", ZAR: "ZA", AED: "AE",
   IDR: "ID", NGN: "NG", KRW: "KR",
 }
 
 /** PayCraft billing interval → ISO-8601 duration for a Play base plan. */
-function playBillingPeriod(interval: string | null | undefined): string {
+export function playBillingPeriod(interval: string | null | undefined): string {
   switch (interval) {
     case "month": return "P1M"
     case "quarter": return "P3M"
@@ -108,12 +108,12 @@ function sanitizePlayProductId(sku: string): string {
 }
 
 /** Base plan ids: lowercase, [a-z0-9-], ≤ 63 chars. */
-function basePlanIdFor(playProductId: string): string {
+export function basePlanIdFor(playProductId: string): string {
   return `${playProductId}-autorenew`.replace(/[^a-z0-9-]/g, "-").slice(0, 63)
 }
 
 /** ISO minor units → Play Money { currencyCode, units, nanos }. */
-function toPlayMoney(currency: string, amountCents: number) {
+export function toPlayMoney(currency: string, amountCents: number) {
   const ccy = currency.toUpperCase()
   if (ZERO_DECIMAL_CURRENCIES.has(ccy)) {
     return { currencyCode: ccy, units: String(Math.round(amountCents)), nanos: 0 }
@@ -123,7 +123,7 @@ function toPlayMoney(currency: string, amountCents: number) {
   return { currencyCode: ccy, units: String(units), nanos }
 }
 
-async function playFetch(
+export async function playFetch(
   token: string,
   path: string,
   init: RequestInit = {},
@@ -139,7 +139,7 @@ async function playFetch(
 }
 
 /** Pull Google's `error.message` out of an API error body, else a short slice. */
-function shortPlayError(body: string): string {
+export function shortPlayError(body: string): string {
   try {
     return (JSON.parse(body)?.error?.message as string) || body.slice(0, 200)
   } catch {
@@ -187,7 +187,7 @@ async function activateBasePlan(
  * The free-trial offer MUST be priced in the SAME regions as the base plan, so
  * both the base-plan create and the offer create derive regions from here.
  */
-function resolveRegions(prices: GooglePlayPriceInput[]): string[] {
+export function resolveRegions(prices: GooglePlayPriceInput[]): string[] {
   const regions: string[] = []
   const seen = new Set<string>()
   for (const { currency } of prices) {
