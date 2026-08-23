@@ -48,6 +48,91 @@ export interface AppStoreSyncResult {
   appStoreProductId: string
   subscriptionResourceId: string
   created: boolean
+  /**
+   * Whether a FREE_TRIAL introductory offer is present on the subscription after
+   * this sync (created here or already existed). false with no trial requested.
+   * Without it StoreKit never grants the trial the paywall advertises.
+   */
+  introductoryOfferActive?: boolean
+  /** Human-readable reason the intro offer isn't active (present iff a trial was requested but not set). */
+  introductoryOfferError?: string
+}
+
+/**
+ * App Store introductory-offer durations are a FIXED enum, not arbitrary days —
+ * map the requested trial length to the NEAREST allowed duration (Apple rejects
+ * anything else). 14 → TWO_WEEKS, 30 → ONE_MONTH, etc.
+ */
+function ascIntroDuration(days: number): string {
+  const table: Array<[number, string]> = [
+    [3, "THREE_DAYS"], [7, "ONE_WEEK"], [14, "TWO_WEEKS"], [30, "ONE_MONTH"],
+    [60, "TWO_MONTHS"], [90, "THREE_MONTHS"], [180, "SIX_MONTHS"], [365, "ONE_YEAR"],
+  ]
+  let best = table[0]
+  let bestDelta = Number.POSITIVE_INFINITY
+  for (const row of table) {
+    const delta = Math.abs(row[0] - days)
+    if (delta < bestDelta) { bestDelta = delta; best = row }
+  }
+  return best[1]
+}
+
+/**
+ * Ensure a FREE_TRIAL introductory offer exists on the subscription so StoreKit
+ * actually grants the trial the paywall advertises. Idempotent: lists existing
+ * introductory offers first and skips when a FREE_TRIAL is already present
+ * (offers are effectively immutable once live). A free trial is GLOBAL — Apple
+ * rejects a per-territory price computation for FREE_TRIAL, so territory +
+ * subscriptionPricePoint are intentionally OMITTED. Best-effort: never throws;
+ * returns a reason string on failure so the caller can surface a warning.
+ */
+async function ensureIntroductoryOffer(
+  token: string,
+  subscriptionId: string,
+  trialDays: number,
+): Promise<{ active: boolean; error?: string }> {
+  // Probe — already has an introductory offer? (idempotent re-sync)
+  const listRes = await ascFetch(
+    token,
+    `/v1/subscriptions/${subscriptionId}/introductoryOffers?limit=10`,
+  )
+  if (listRes.ok) {
+    const list = await listRes.json()
+    const hasFreeTrial = (list.data ?? []).some(
+      (o: any) => o?.attributes?.offerMode === "FREE_TRIAL",
+    )
+    if (hasFreeTrial) return { active: true }
+  }
+
+  const createRes = await ascFetch(token, `/v1/subscriptionIntroductoryOffers`, {
+    method: "POST",
+    body: JSON.stringify({
+      data: {
+        type: "subscriptionIntroductoryOffers",
+        attributes: {
+          offerMode: "FREE_TRIAL",
+          duration: ascIntroDuration(trialDays),
+          numberOfPeriods: 1,
+          // null start = the always-on baseline intro offer for new subscribers.
+          startDate: null,
+        },
+        relationships: {
+          // territory + subscriptionPricePoint intentionally omitted → a single
+          // GLOBAL free trial (Apple rejects per-territory pricing for FREE_TRIAL).
+          subscription: { data: { type: "subscriptions", id: subscriptionId } },
+        },
+      },
+    }),
+  })
+  if (createRes.ok) return { active: true }
+  const body = await createRes.text()
+  console.warn(
+    `[appstore-product-sync] introductoryOffers.create failed for ${subscriptionId} (${createRes.status}): ${body}`,
+  )
+  return {
+    active: false,
+    error: `free-trial introductory offer not set (${createRes.status}): ${body.slice(0, 200)}`,
+  }
 }
 
 /** PayCraft billing interval → ASC subscriptionPeriod enum. */
@@ -222,8 +307,11 @@ export async function syncProductToAppStore(
   interval: string | null,
   prices: AppStorePriceInput[],
   existingAppStoreProductId?: string,
+  /** Free-trial length in days (trial_enabled + trial_duration_days). 0/undefined → no intro offer. */
+  trialDays?: number | null,
 ): Promise<AppStoreSyncResult> {
   const token = appStoreConnectToken(creds)
+  const wantsTrial = typeof trialDays === "number" && trialDays > 0
 
   const appId = await resolveAppId(token, creds.bundleId)
   const groupId = await ensureSubscriptionGroup(token, appId)
@@ -231,6 +319,14 @@ export async function syncProductToAppStore(
   const productId = existingAppStoreProductId || sanitizeAscProductId(creds.bundleId, sku)
 
   const existingId = await findSubscription(token, groupId, productId)
+
+  // Provision the FREE_TRIAL introductory offer once the subscription exists,
+  // in BOTH branches, so re-syncing an existing subscription can add a trial.
+  const withTrial = async (base: AppStoreSyncResult): Promise<AppStoreSyncResult> => {
+    if (!wantsTrial) return base
+    const t = await ensureIntroductoryOffer(token, base.subscriptionResourceId, trialDays as number)
+    return { ...base, introductoryOfferActive: t.active, introductoryOfferError: t.error }
+  }
 
   if (existingId) {
     // Present → refresh the reference name only (productId + period are
@@ -251,7 +347,7 @@ export async function syncProductToAppStore(
       )
     }
     await ensurePrice(token, existingId, prices)
-    return { appStoreProductId: productId, subscriptionResourceId: existingId, created: false }
+    return withTrial({ appStoreProductId: productId, subscriptionResourceId: existingId, created: false })
   }
 
   // Not found → CREATE the subscription.
@@ -283,5 +379,5 @@ export async function syncProductToAppStore(
 
   await ensurePrice(token, newId, prices)
 
-  return { appStoreProductId: productId, subscriptionResourceId: newId, created: true }
+  return withTrial({ appStoreProductId: productId, subscriptionResourceId: newId, created: true })
 }

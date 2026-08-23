@@ -50,6 +50,9 @@ export async function stripeSyncProduct(
     const prices = buildPriceInputs(body)
     if (!prices.length) return
 
+    const trialDays =
+      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+
     const result = await syncProductToStripe(
       tenantId,
       productId,
@@ -58,6 +61,7 @@ export async function stripeSyncProduct(
       toStripeInterval(body.interval),
       prices,
       { stripeProductId: existingStripeProductId, existingPrices },
+      trialDays,
     )
 
     await Promise.all([
@@ -334,6 +338,9 @@ export async function appStoreSyncProduct(
       amountCents: p.amountCents,
     }))
 
+    const trialDays =
+      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+
     const result = await syncProductToAppStore(
       {
         keyId: cfg.key_id,
@@ -347,6 +354,7 @@ export async function appStoreSyncProduct(
       body.interval ?? null,
       prices,
       existingAppStoreProductId,
+      trialDays,
     )
 
     await supabase.rpc("tenant_products_set_store_ids", {
@@ -354,6 +362,14 @@ export async function appStoreSyncProduct(
       p_play_product_id: null,
       p_app_store_product_id: result.appStoreProductId,
     })
+    // A trial was requested but the StoreKit intro offer didn't set — surface it.
+    if (trialDays > 0 && result.introductoryOfferActive === false) {
+      return {
+        error:
+          result.introductoryOfferError ??
+          `App Store subscription synced but the ${trialDays}-day free-trial introductory offer was not set`,
+      }
+    }
     return {}
   } catch (e: any) {
     const msg = e?.message ?? String(e)

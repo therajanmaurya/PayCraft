@@ -221,6 +221,11 @@ async function initiateRazorpay(
         "Razorpay plan not yet synced for this product in INR — re-sync at /products",
       )
     }
+    // Free trial → Razorpay start_at (first charge delayed by the trial window).
+    const trialDurationDays =
+      req.product.trial_enabled && req.product.trial_duration_days
+        ? Number(req.product.trial_duration_days)
+        : undefined
     const sub = await createUpiAutopaySubscription({
       tenantId: req.tenantId,
       planId,
@@ -229,6 +234,7 @@ async function initiateRazorpay(
       customerPhone: req.customer.phone,
       productSku: req.product.display_name,
       productId: req.product.id,
+      trialDurationDays,
       mode,
     })
     return {

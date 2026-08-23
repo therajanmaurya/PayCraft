@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const { data: product } = await supabase
     .from("tenant_products")
     .select(
-      "id, type, display_name, base_price_cents, base_currency, interval, stripe_price_id_by_currency, razorpay_plan_id_by_currency",
+      "id, type, display_name, base_price_cents, base_currency, interval, stripe_price_id_by_currency, razorpay_plan_id_by_currency, trial_enabled, trial_duration_days",
     )
     .eq("id", productId)
     .eq("tenant_id", tenant.id)

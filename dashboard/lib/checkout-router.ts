@@ -62,6 +62,10 @@ export interface ProductForRouting {
   base_price_cents: number
   base_currency: string
   interval: string | null
+  // Free-trial config — drives the Razorpay Subscription `start_at` (delayed first
+  // charge = trial window) so the checkout honours the trial the paywall advertises.
+  trial_enabled?: boolean
+  trial_duration_days?: number | null
   stripe_price_id_by_currency: Record<string, string> | null
   // Payment link URLs the dashboard cached at sync time. May be stale;
   // the router treats absence as "Stripe unavailable for this currency".
