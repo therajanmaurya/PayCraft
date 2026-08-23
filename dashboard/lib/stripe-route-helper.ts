@@ -37,7 +37,7 @@ function buildPriceInputs(body: Record<string, any>): PriceInput[] {
 export async function stripeSyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<{ ok?: boolean; skipped?: boolean; error?: string }> {
+): Promise<{ ok?: boolean; skipped?: boolean; error?: string; reason?: string }> {
   const { tenantId, productId, body, existingStripeProductId, existingPrices } = opts
   try {
     // Unified status check — recognizes BOTH the OAuth Connect path and the
@@ -47,10 +47,10 @@ export async function stripeSyncProduct(
     const { data: connect, error: connectErr } = await supabase
       .rpc("tenant_stripe_provider_status", { p_tenant_id: tenantId })
       .single<{ source: string | null; account_id: string | null; livemode: boolean }>()
-    if (connectErr || !connect?.source) return { skipped: true }
+    if (connectErr || !connect?.source) return { skipped: true, reason: "Stripe is not connected" }
 
     const prices = buildPriceInputs(body)
-    if (!prices.length) return { skipped: true }
+    if (!prices.length) return { skipped: true, reason: "no pricing configured for this product" }
 
     const trialDays =
       body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
@@ -171,13 +171,13 @@ export async function razorpaySyncProduct(
 export async function cashfreeSyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<{ ok?: boolean; skipped?: boolean; error?: string }> {
+): Promise<{ ok?: boolean; skipped?: boolean; error?: string; reason?: string }> {
   const { tenantId, productId, body } = opts
   try {
     const { data: status } = await supabase
       .rpc("tenant_providers_status", { p_tenant_id: tenantId, p_provider: "cashfree" })
       .single<{ test_key_id: string | null; live_key_id: string | null; connected: boolean }>()
-    if (!status?.connected) return { skipped: true }
+    if (!status?.connected) return { skipped: true, reason: "Cashfree is not connected" }
 
     const mode: "test" | "live" = status.live_key_id ? "live" : "test"
 
@@ -191,10 +191,12 @@ export async function cashfreeSyncProduct(
         p_mode: mode,
       })
       .single<{ secret_key: string; key_id: string }>()
-    if (!decrypted?.secret_key || !decrypted?.key_id) return { skipped: true }
+    if (!decrypted?.secret_key || !decrypted?.key_id) {
+      return { skipped: true, reason: "Cashfree credentials could not be read" }
+    }
 
     const prices = buildPriceInputs(body)
-    if (!prices.length) return { skipped: true }
+    if (!prices.length) return { skipped: true, reason: "no pricing configured for this product" }
 
     const result = await syncProductToCashfree(
       tenantId,
@@ -209,7 +211,15 @@ export async function cashfreeSyncProduct(
 
     // Cashfree only supports one-time INR links today (subscriptions self-skip in
     // syncProductToCashfree, returning no links) — that's a SKIP, not a failure.
-    if (Object.keys(result.paymentLinksByCurrency).length === 0) return { skipped: true }
+    if (Object.keys(result.paymentLinksByCurrency).length === 0) {
+      return {
+        skipped: true,
+        reason:
+          body.type === "subscription"
+            ? "Cashfree does not support subscriptions — use Razorpay/Stripe or UPI Autopay for recurring"
+            : "Cashfree returned no payment link (only one-time INR is supported)",
+      }
+    }
 
     await supabase.rpc("tenant_providers_merge_payment_links", {
       p_tenant_id: tenantId,
@@ -238,10 +248,12 @@ export async function cashfreeSyncProduct(
 export async function googlePlaySyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<{ error?: string; warning?: string }> {
+): Promise<{ error?: string; warning?: string; skipped?: boolean; reason?: string }> {
   const { tenantId, productId, body, existingPlayProductId } = opts
   try {
-    if (body.type !== "subscription") return {}
+    if (body.type !== "subscription") {
+      return { skipped: true, reason: "native stores only sync subscription products" }
+    }
 
     const { data: status } = await supabase
       .rpc("tenant_providers_store_status", { p_tenant_id: tenantId, p_provider: "google_play" })
@@ -321,10 +333,12 @@ export async function googlePlaySyncProduct(
 export async function appStoreSyncProduct(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; skipped?: boolean; reason?: string }> {
   const { tenantId, productId, body, existingAppStoreProductId } = opts
   try {
-    if (body.type !== "subscription") return {}
+    if (body.type !== "subscription") {
+      return { skipped: true, reason: "native stores only sync subscription products" }
+    }
 
     const { data: status } = await supabase
       .rpc("tenant_providers_store_status", { p_tenant_id: tenantId, p_provider: "app_store" })
@@ -393,6 +407,12 @@ export interface ProviderSyncEntry {
   status: "synced" | "draft" | "failed" | "skipped"
   error?: string
   warning?: string
+  /**
+   * Human reason for a non-`synced` status — ALWAYS set for skipped/failed/draft so
+   * the UI never shows an opaque "skipped" without explaining why (not connected /
+   * no pricing / product type unsupported / DRAFT-until-published / real error).
+   */
+  reason?: string
 }
 
 export interface ProductSyncSummary {
@@ -415,13 +435,13 @@ const NOT_CONNECTED_RE =
  * draft; any other error → failed; otherwise synced.
  */
 export function classifyProvider(
-  r: { ok?: boolean; skipped?: boolean; error?: string; warning?: string } | undefined,
+  r: { ok?: boolean; skipped?: boolean; error?: string; warning?: string; reason?: string } | undefined,
 ): ProviderSyncEntry {
-  if (!r) return { status: "skipped" }
-  if (r.skipped) return { status: "skipped" }
-  if (r.error && NOT_CONNECTED_RE.test(r.error)) return { status: "skipped" }
-  if (r.error) return { status: "failed", error: r.error }
-  if (r.warning) return { status: "draft", warning: r.warning }
+  if (!r) return { status: "skipped", reason: "provider returned no result" }
+  if (r.skipped) return { status: "skipped", reason: r.reason ?? r.error ?? "not applicable" }
+  if (r.error && NOT_CONNECTED_RE.test(r.error)) return { status: "skipped", reason: r.error }
+  if (r.error) return { status: "failed", error: r.error, reason: r.error }
+  if (r.warning) return { status: "draft", warning: r.warning, reason: r.warning }
   return { status: "synced" }
 }
 

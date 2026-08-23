@@ -33,15 +33,20 @@ type Product = {
   app_store_product_id: string | null
   // Durable provider-sync state (migration 078).
   sync_status: "pending" | "syncing" | "synced" | "partial" | "failed" | null
-  sync_state: Record<string, { status: string; error?: string; warning?: string }> | null
+  sync_state: Record<string, { status: string; error?: string; warning?: string; reason?: string }> | null
 }
 
-/** First human-readable failure/DRAFT reason across providers, for the badge tooltip. */
+/**
+ * Tooltip text for the row's sync badge — the failure/DRAFT reason from the
+ * FIRST failed-or-draft provider (a plain skip like "Stripe not connected" is
+ * omitted so an optional-provider skip doesn't read as a problem).
+ */
 function firstSyncReason(state: Product["sync_state"]): string | null {
   if (!state) return null
   for (const [provider, s] of Object.entries(state)) {
-    if (s?.error) return `${provider}: ${s.error}`
-    if (s?.warning) return `${provider}: ${s.warning}`
+    if (s?.status === "failed" || s?.status === "draft") {
+      return `${provider}: ${s.reason ?? s.error ?? s.warning ?? s.status}`
+    }
   }
   return null
 }

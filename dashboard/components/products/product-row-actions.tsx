@@ -203,18 +203,26 @@ export function ProductRowActions({
 
 function SyncBadge({ name, report }: { name: string; report: SyncReport }) {
   if (report.status === "skipped") {
+    // A skip ALWAYS explains itself (not connected / no pricing / type unsupported).
     return (
-      <div className="flex items-center gap-1.5 text-[11px] text-ink-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-ink-300" />
-        {name} · not connected
+      <div className="flex items-start gap-1.5 text-[11px] text-ink-400">
+        <span className="w-1.5 h-1.5 rounded-full bg-ink-300 flex-shrink-0 mt-1" />
+        <div>
+          {name} skipped
+          <div className="text-[10px] text-ink-500 mt-0.5">{report.message ?? "not connected"}</div>
+        </div>
       </div>
     )
   }
   if (report.status === "ok") {
     return (
-      <div className="flex items-center gap-1.5 text-[11px] text-emerald-700">
-        <Check className="w-3 h-3" />
-        {name} synced
+      <div className="flex items-start gap-1.5 text-[11px] text-emerald-700">
+        <Check className="w-3 h-3 flex-shrink-0 mt-0.5" />
+        <div>
+          {name} synced
+          {/* draft: base synced but the trial offer is DRAFT until the app is published */}
+          {report.message && <div className="text-[10px] text-amber-600 mt-0.5">{report.message}</div>}
+        </div>
       </div>
     )
   }

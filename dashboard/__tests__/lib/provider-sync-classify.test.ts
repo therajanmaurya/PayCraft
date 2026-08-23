@@ -18,23 +18,28 @@ jest.mock("@/lib/razorpay-client", () => ({ getConnectedRazorpayClient: jest.fn(
 
 import { classifyProvider } from "@/lib/stripe-route-helper"
 
-test("ok:true → synced (Stripe/Cashfree/Razorpay success)", () => {
+test("ok:true → synced (no reason needed)", () => {
   expect(classifyProvider({ ok: true })).toEqual({ status: "synced" })
 })
 
-test("skipped:true → skipped (provider not connected / not applicable)", () => {
-  expect(classifyProvider({ skipped: true })).toEqual({ status: "skipped" })
+test("skipped:true → skipped WITH a reason (never opaque)", () => {
+  const out = classifyProvider({ skipped: true, reason: "Stripe is not connected" })
+  expect(out.status).toBe("skipped")
+  expect(out.reason).toBe("Stripe is not connected")
 })
 
-test("undefined → skipped (provider returned nothing)", () => {
-  expect(classifyProvider(undefined)).toEqual({ status: "skipped" })
+test("skipped with no reason still carries a fallback reason", () => {
+  expect(classifyProvider({ skipped: true }).reason).toBeTruthy()
+  expect(classifyProvider(undefined)).toMatchObject({ status: "skipped" })
+  expect(classifyProvider(undefined).reason).toBeTruthy()
 })
 
-test("not-connected error → skipped, never failed", () => {
-  expect(classifyProvider({ ok: false, error: "Razorpay is not connected for this tenant" }))
-    .toEqual({ status: "skipped" })
-  expect(classifyProvider({ error: "no stored Google Play service-account credential" }))
-    .toEqual({ status: "skipped" })
+test("not-connected error → skipped, never failed, reason preserved", () => {
+  const r = classifyProvider({ ok: false, error: "Razorpay is not connected for this tenant" })
+  expect(r.status).toBe("skipped")
+  expect(r.reason).toMatch(/not connected/)
+  expect(classifyProvider({ error: "no stored Google Play service-account credential" }).status)
+    .toBe("skipped")
 })
 
 test("real error → failed + reason", () => {
