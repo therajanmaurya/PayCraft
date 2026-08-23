@@ -1,0 +1,28 @@
+{
+  // PayCraft dashboard on Cloudflare Workers via @opennextjs/cloudflare
+  // (migrated off Vercel 2026-08-23). Full Next.js 14 App Router — server
+  // components + Node-runtime API routes (stripe / razorpay / @supabase Node
+  // SDKs) — so `nodejs_compat` is REQUIRED (edge-only next-on-pages would break
+  // the razorpay SDK). Deploy: `npm run cf:deploy` (CI) — reads CLOUDFLARE_ACCOUNT_ID
+  // + CLOUDFLARE_API_TOKEN (org-level mbs-cloudflare-* creds).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "paycraft-dashboard",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-03-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  // Custom domain is attached in the Cloudflare dashboard / via a route:
+  //   paycraft.mobilebytesensei.com → this Worker.
+  // Runtime env vars (Supabase URL/keys, Stripe/Razorpay, encryption key, etc.)
+  // are set as Worker secrets, NOT committed here — `wrangler secret put` or the
+  // Cloudflare dashboard. Only NON-secret vars belong in `vars`.
+  "vars": {
+    "NEXT_PUBLIC_APP_ENV": "production"
+  }
+}

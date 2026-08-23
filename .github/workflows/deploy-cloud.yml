@@ -44,29 +44,36 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
   deploy-dashboard:
-    name: Deploy Next.js dashboard to Vercel
+    name: Deploy Next.js dashboard to Cloudflare Workers
     runs-on: ubuntu-latest
     needs: [deploy-migrations]
     if: github.event.inputs.dry_run != 'true'
+    defaults:
+      run:
+        working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
 
-      # The dashboard is a STANDALONE Next.js app under dashboard/ — NOT a pnpm
-      # workspace (no root pnpm-lock.yaml / pnpm-workspace.yaml), so a root
-      # `pnpm install --frozen-lockfile` and `pnpm --filter dashboard` cannot
-      # work. Vercel builds the app remotely (project Root Directory = dashboard),
-      # so there is no local install/build step here — we only trigger the deploy.
-      # working-directory MUST be the repo root: the Vercel project already
-      # appends Root Directory=dashboard, so pointing the action at dashboard/
-      # would resolve to dashboard/dashboard and fail.
-      - name: Deploy to Vercel (production)
-        uses: amondnet/vercel-action@v25
+      - uses: actions/setup-node@v4
         with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: .
+          node-version: 20
+
+      # The dashboard is a STANDALONE Next.js app under dashboard/ (no root
+      # workspace). Migrated off Vercel → Cloudflare Workers via
+      # @opennextjs/cloudflare (2026-08-23): full Next 14 App Router with
+      # nodejs_compat, so the Node stripe/razorpay/@supabase SDKs run unchanged.
+      # cf:deploy = `opennextjs-cloudflare build && … deploy` (reads
+      # CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN below).
+      - name: Install deps
+        run: npm install
+
+      - name: Build + deploy to Cloudflare Workers
+        run: npm run cf:deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # The org token materializes as CLOUDFLARE_PAGES_API_TOKEN (alias
+          # mbs-cloudflare-pages-api-token); wrangler reads CLOUDFLARE_API_TOKEN.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
 
   deploy-functions:
     name: Deploy Supabase edge functions
