@@ -17,6 +17,11 @@ export interface RazorpayRestClient {
   subscriptions: { create(payload: Record<string, unknown>): Promise<any> }
   payments: { all(params?: { count?: number }): Promise<any> }
   offers: { create(payload: Record<string, unknown>): Promise<any> }
+  plans: { create(payload: Record<string, unknown>): Promise<any> }
+  paymentLink: { create(payload: Record<string, unknown>): Promise<any> }
+  subscriptionRegistration: {
+    createRegistrationLink(payload: Record<string, unknown>): Promise<any>
+  }
 }
 
 export function razorpayRest(keyId: string, keySecret: string): RazorpayRestClient {
@@ -60,6 +65,12 @@ export function razorpayRest(keyId: string, keySecret: string): RazorpayRestClie
     subscriptions: { create: (payload) => call("POST", "/subscriptions", payload) },
     payments: { all: (params) => call("GET", "/payments", undefined, { count: params?.count }) },
     offers: { create: (payload) => call("POST", "/offers", payload) },
+    plans: { create: (payload) => call("POST", "/plans", payload) },
+    paymentLink: { create: (payload) => call("POST", "/payment_links", payload) },
+    subscriptionRegistration: {
+      createRegistrationLink: (payload) =>
+        call("POST", "/subscription_registration/auth_links", payload),
+    },
   }
 }
 

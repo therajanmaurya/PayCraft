@@ -1,7 +1,7 @@
-import { syncCouponBestEffort as stripeSync } from "./stripe-coupon-sync"
-import { syncCouponBestEffort as razorpaySync } from "./razorpay-coupon-sync"
-import { syncCouponBestEffort as googlePlaySync } from "./googleplay-coupon-sync"
-import { syncCouponBestEffort as appStoreSync } from "./appstore-coupon-sync"
+import { syncCouponToStripe } from "./stripe-coupon-sync"
+import { syncCouponToRazorpay } from "./razorpay-coupon-sync"
+import { syncCouponToGooglePlay } from "./googleplay-coupon-sync"
+import { syncCouponToAppStore } from "./appstore-coupon-sync"
 
 /**
  * Generic coupon → provider fan-out.
@@ -37,18 +37,46 @@ interface CouponAdapter {
 export const PROVIDER_COUPON_ADAPTERS: CouponAdapter[] = [
   {
     provider: "stripe",
-    run: (a) =>
-      stripeSync({ ...a, existingStripeCouponId: null, existingStripePromotionCodeId: null }),
+    run: async (a) => {
+      await syncCouponToStripe({ ...a, existingStripeCouponId: null, existingStripePromotionCodeId: null })
+    },
   },
   {
     provider: "razorpay",
-    run: (a) => razorpaySync({ ...a, existingRazorpayOfferId: null }),
+    run: async (a) => {
+      await syncCouponToRazorpay({ ...a, existingRazorpayOfferId: null })
+    },
   },
-  { provider: "google_play", run: (a) => googlePlaySync(a) },
-  { provider: "app_store", run: (a) => appStoreSync(a) },
+  { provider: "google_play", run: async (a) => { await syncCouponToGooglePlay(a) } },
+  { provider: "app_store", run: async (a) => { await syncCouponToAppStore(a) } },
 ]
 
-/** Fan a coupon out to every provider adapter concurrently (all best-effort). */
+/** Fan a coupon out to every provider (best-effort — one failure never blocks the rest). */
 export async function syncCouponToAllProviders(args: CouponSyncArgs): Promise<void> {
-  await Promise.all(PROVIDER_COUPON_ADAPTERS.map((adapter) => adapter.run(args)))
+  await Promise.all(
+    PROVIDER_COUPON_ADAPTERS.map((adapter) =>
+      adapter.run(args).catch((e) =>
+        console.error(`[coupon-provider-sync] ${adapter.provider} failed:`, e?.message ?? e),
+      ),
+    ),
+  )
+}
+
+/**
+ * Sync a coupon to ONE provider — used on the free Cloudflare tier where the
+ * full fan-out (esp. Google Play / App Store iterating every product) exceeds the
+ * 50-subrequest-per-invocation cap. Callers hit the endpoint once per provider.
+ */
+export async function syncCouponToProvider(
+  provider: string,
+  args: CouponSyncArgs,
+): Promise<{ ran: boolean; error?: string }> {
+  const adapter = PROVIDER_COUPON_ADAPTERS.find((a) => a.provider === provider)
+  if (!adapter) return { ran: false, error: "unknown provider" }
+  try {
+    await adapter.run(args)
+    return { ran: true }
+  } catch (e: any) {
+    return { ran: true, error: e?.message ?? String(e) }
+  }
 }

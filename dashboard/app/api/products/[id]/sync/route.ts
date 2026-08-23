@@ -26,6 +26,12 @@ export async function POST(
   const { tenant, userId } = await requireTenant()
   const supabase = createClient()
 
+  // Optional ?provider=<name> — sync ONE provider this request. The free
+  // Cloudflare tier caps a request at 50 subrequests, which the full 5-provider
+  // fan-out exceeds, so the dashboard syncs provider-by-provider on the free tier.
+  const providerParam = new URL(_req.url).searchParams.get("provider") as
+    | "stripe" | "razorpay" | "cashfree" | "google_play" | "app_store" | null
+
   // Load the product + its per-currency pricing so the sync helpers have the
   // full inputs (the same shape the create/update routes pass through).
   const { data: product, error } = await supabase
@@ -59,6 +65,7 @@ export async function POST(
     tenantId: tenant.id,
     productId: params.id,
     body,
+    onlyProvider: providerParam ?? undefined,
     existingStripeProductId: product.stripe_product_id ?? undefined,
     existingPrices: product.stripe_price_id_by_currency ?? undefined,
     existingRazorpayPlanIds: product.razorpay_plan_id_by_currency ?? undefined,
@@ -74,12 +81,11 @@ export async function POST(
     status: e.status === "failed" ? "failed" : e.status === "skipped" ? "skipped" : "ok",
     message: e.reason,
   })
-  const reports = {
-    stripe: toReport(summary.providers.stripe),
-    razorpay: toReport(summary.providers.razorpay),
-    cashfree: toReport(summary.providers.cashfree),
-    google_play: toReport(summary.providers.google_play),
-    app_store: toReport(summary.providers.app_store),
+  // Build from whatever providers actually ran — per-provider mode returns just
+  // one, so hardcoding all five would dereference `undefined` and 500.
+  const reports: Record<string, { status: "ok" | "failed" | "skipped"; message?: string }> = {}
+  for (const [name, entry] of Object.entries(summary.providers)) {
+    reports[name] = toReport(entry)
   }
 
   await supabase.rpc("audit_log_emit", {

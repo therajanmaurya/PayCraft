@@ -2,6 +2,7 @@ import { createClient } from "./supabase-server"
 import { playAccessToken, type PlayServiceAccountJson } from "./store-jwt"
 import {
   CURRENCY_REGION,
+  REGIONS_VERSION,
   basePlanIdFor,
   playBillingPeriod,
   playFetch,
@@ -148,10 +149,11 @@ export async function syncCouponToGooglePlay(opts: {
         regionalConfigs: regions.map((regionCode) => ({ regionCode, newSubscriberAvailability: true })),
         offerTags: [{ tag: "coupon" }],
       }
-      const createRes = await playFetch(token, `${offersBase}?offerId=${encodeURIComponent(offerId)}`, {
-        method: "POST",
-        body: JSON.stringify(offerBody),
-      })
+      const createRes = await playFetch(
+        token,
+        `${offersBase}?offerId=${encodeURIComponent(offerId)}&regionsVersion.version=${REGIONS_VERSION}`,
+        { method: "POST", body: JSON.stringify(offerBody) },
+      )
       if (!createRes.ok) {
         console.error(
           `[googleplay-coupon-sync] offers.create failed for ${prod.playProductId} (${createRes.status}): ${shortPlayError(await createRes.text())}`,

@@ -14,6 +14,13 @@ interface SyncOptions {
   existingRazorpayPlanIds?: Record<string, string>
   existingPlayProductId?: string
   existingAppStoreProductId?: string
+  /**
+   * Sync only ONE provider this invocation. Cloudflare's free Workers/Pages tier
+   * caps a single request at 50 subrequests; the full 5-provider fan-out exceeds
+   * that, so callers on the free tier sync provider-by-provider (5 requests) and
+   * each stays well under the cap. Result is merged into the existing sync_state.
+   */
+  onlyProvider?: "stripe" | "razorpay" | "cashfree" | "google_play" | "app_store"
 }
 
 function buildPriceInputs(body: Record<string, any>): PriceInput[] {
@@ -464,7 +471,7 @@ export async function runProductSync(
   supabase: ReturnType<typeof createClient>,
   opts: SyncOptions,
 ): Promise<ProductSyncSummary> {
-  const { productId } = opts
+  const { productId, onlyProvider } = opts
 
   await supabase.rpc("tenant_products_set_sync_state", {
     p_id: productId,
@@ -472,21 +479,20 @@ export async function runProductSync(
     p_state: null,
   })
 
-  const [stripeR, razorpayR, cashfreeR, googleR, appstoreR] = await Promise.all([
-    stripeSyncProduct(supabase, opts),
-    razorpaySyncProduct(supabase, opts),
-    cashfreeSyncProduct(supabase, opts),
-    googlePlaySyncProduct(supabase, opts),
-    appStoreSyncProduct(supabase, opts),
-  ])
-
-  const providers: Record<string, ProviderSyncEntry> = {
-    stripe: classifyProvider(stripeR),
-    razorpay: classifyProvider(razorpayR),
-    cashfree: classifyProvider(cashfreeR),
-    google_play: classifyProvider(googleR),
-    app_store: classifyProvider(appstoreR),
+  const runners: Record<string, () => Promise<any>> = {
+    stripe: () => stripeSyncProduct(supabase, opts),
+    razorpay: () => razorpaySyncProduct(supabase, opts),
+    cashfree: () => cashfreeSyncProduct(supabase, opts),
+    google_play: () => googlePlaySyncProduct(supabase, opts),
+    app_store: () => appStoreSyncProduct(supabase, opts),
   }
+  const keys = onlyProvider ? [onlyProvider] : Object.keys(runners)
+  const results = await Promise.all(keys.map((k) => runners[k]()))
+
+  const providers: Record<string, ProviderSyncEntry> = {}
+  keys.forEach((k, i) => {
+    providers[k] = classifyProvider(results[i])
+  })
 
   const values = Object.values(providers)
   const status: ProductSyncSummary["status"] = values.some((v) => v.status === "failed")

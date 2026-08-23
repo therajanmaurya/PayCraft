@@ -144,6 +144,9 @@ export async function syncCouponToAppStore(opts: {
           relationships: {
             subscription: { data: { type: "subscriptions", id: subId } },
             subscriptionPricePoint: { data: { type: "subscriptionPricePoints", id: best.id } },
+            // Apple requires an explicit territory relationship (409 without it); the
+            // resolved price point is a USA point, so scope the offer to USA to match.
+            territory: { data: { type: "territories", id: "USA" } },
           },
         },
       }),

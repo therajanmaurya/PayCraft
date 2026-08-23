@@ -34,7 +34,7 @@ const ANDROID_PUBLISHER_BASE =
 // Play requires a regionsVersion for any pricing write. This is the published
 // price-config version tag; "2022/02" is the long-stable baseline Google
 // documents in the monetization examples.
-const REGIONS_VERSION = "2022/02"
+export const REGIONS_VERSION = "2022/02"
 
 export interface GooglePlayCreds {
   /** Decrypted service-account JSON blob (the whole document, as a string). */

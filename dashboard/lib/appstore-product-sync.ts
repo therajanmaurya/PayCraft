@@ -117,9 +117,12 @@ async function ensureIntroductoryOffer(
           startDate: null,
         },
         relationships: {
-          // territory + subscriptionPricePoint intentionally omitted → a single
-          // GLOBAL free trial (Apple rejects per-territory pricing for FREE_TRIAL).
+          // subscriptionPricePoint is omitted (FREE_TRIAL has no price), but Apple
+          // REQUIRES a `territory` relationship (409 ENTITY_ERROR.RELATIONSHIP.REQUIRED
+          // without it). The rest of the ASC integration is USA-centric, so scope the
+          // trial to USA to match (multi-territory is a broader follow-up).
           subscription: { data: { type: "subscriptions", id: subscriptionId } },
+          territory: { data: { type: "territories", id: "USA" } },
         },
       },
     }),
