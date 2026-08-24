@@ -35,13 +35,42 @@ export async function GET() {
   // NAMES are returned — never any key ciphertext.
   const { data: provRows } = await supabase
     .from("tenant_providers")
-    .select("tenant_id, provider, is_active")
+    .select("tenant_id, provider, is_active, live_key_id, test_key_id, store_config")
     .in("tenant_id", tenantIds)
 
-  const byTenant: Record<string, string[]> = {}
-  for (const r of (provRows ?? []) as { tenant_id: string; provider: string; is_active: boolean }[]) {
+  // A non-secret account identifier per provider, so the operator can verify WHICH
+  // account each connection uses before copying it: Google Play → service-account
+  // email; App Store → issuer id; Stripe/Razorpay → masked public key id. No secret.
+  type ProvRow = {
+    tenant_id: string
+    provider: string
+    is_active: boolean
+    live_key_id: string | null
+    test_key_id: string | null
+    store_config: Record<string, unknown> | null
+  }
+  const mask = (k: string) => (k.length > 14 ? `${k.slice(0, 8)}…${k.slice(-4)}` : k)
+  const accountOf = (r: ProvRow): string | null => {
+    const cfg = r.store_config ?? {}
+    switch (r.provider) {
+      case "google_play":
+        return (cfg.account_email as string) ?? (cfg.package_name as string) ?? null
+      case "app_store":
+        return cfg.issuer_id ? `issuer ${String(cfg.issuer_id).slice(0, 8)}…` : ((cfg.bundle_id as string) ?? null)
+      case "stripe":
+      case "razorpay": {
+        const k = r.live_key_id ?? r.test_key_id
+        return k ? mask(k) : null
+      }
+      default:
+        return null
+    }
+  }
+
+  const byTenant: Record<string, { provider: string; account: string | null }[]> = {}
+  for (const r of (provRows ?? []) as ProvRow[]) {
     if (r.is_active === false) continue
-    ;(byTenant[r.tenant_id] ??= []).push(r.provider)
+    ;(byTenant[r.tenant_id] ??= []).push({ provider: r.provider, account: accountOf(r) })
   }
 
   const withProviders = (apps ?? []).map((a: Record<string, unknown>) => ({

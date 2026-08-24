@@ -7,7 +7,8 @@ import { ArrowLeft, Smartphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 
-type AppRow = { id: string; name: string; providers?: string[]; owner_email?: string }
+type ProviderInfo = { provider: string; account: string | null }
+type AppRow = { id: string; name: string; providers?: ProviderInfo[]; owner_email?: string }
 
 const PROVIDER_LABELS: Record<string, string> = {
   stripe: "Stripe",
@@ -182,15 +183,15 @@ export default function NewAppPage() {
                       {(() => {
                         const provs = apps.find((a) => a.id === reuseFrom)?.providers ?? []
                         return provs.length > 0 ? (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
+                          <div className="mt-2 space-y-1.5 rounded-lg border border-ink-100 bg-white p-2.5">
                             {provs.map((p) => (
-                              <span
-                                key={p}
-                                className="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-2 py-0.5 text-xs text-ink-700"
-                              >
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                {PROVIDER_LABELS[p] ?? p}
-                              </span>
+                              <div key={p.provider} className="flex items-center gap-2 text-xs">
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                                <span className="font-medium text-ink-700 shrink-0">{PROVIDER_LABELS[p.provider] ?? p.provider}</span>
+                                {p.account && (
+                                  <span className="truncate font-mono text-[11px] text-ink-400">{p.account}</span>
+                                )}
+                              </div>
                             ))}
                           </div>
                         ) : (
