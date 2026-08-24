@@ -29,8 +29,14 @@ export async function POST(
   // Optional ?provider=<name> — sync ONE provider this request. The free
   // Cloudflare tier caps a request at 50 subrequests, which the full 5-provider
   // fan-out exceeds, so the dashboard syncs provider-by-provider on the free tier.
-  const providerParam = new URL(_req.url).searchParams.get("provider") as
+  const url = new URL(_req.url)
+  const providerParam = url.searchParams.get("provider") as
     | "stripe" | "razorpay" | "cashfree" | "google_play" | "app_store" | null
+  // Optional ?run_id=<uuid> — when the dashboard opens the live sync dialog it
+  // pre-generates a run id, subscribes to sync_events for it, THEN fires the
+  // per-provider sync requests (all sharing this run id) so the dialog streams
+  // every provider's start + result live.
+  const runId = url.searchParams.get("run_id") ?? undefined
 
   // Load the product + its per-currency pricing so the sync helpers have the
   // full inputs (the same shape the create/update routes pass through).
@@ -65,6 +71,8 @@ export async function POST(
     tenantId: tenant.id,
     productId: params.id,
     body,
+    runId,
+    productName: product.display_name ?? product.sku,
     onlyProvider: providerParam ?? undefined,
     existingStripeProductId: product.stripe_product_id ?? undefined,
     existingPrices: product.stripe_price_id_by_currency ?? undefined,

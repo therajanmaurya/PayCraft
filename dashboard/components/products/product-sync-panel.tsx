@@ -12,6 +12,7 @@ import {
   RefreshCcw,
   XCircle,
 } from "lucide-react"
+import { SyncStatusDialog } from "./sync-status-dialog"
 
 type SyncReport = { status: "ok" | "failed" | "skipped"; message?: string }
 
@@ -63,6 +64,29 @@ export function ProductSyncPanel({
     app_store?: SyncReport
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [syncRunId, setSyncRunId] = useState("")
+
+  const connectedProviders = (): string[] => {
+    const pc = connections?.providers_connected
+    if (!pc) return ["stripe", "razorpay", "google_play", "app_store"]
+    return (Object.keys(pc) as (keyof typeof pc)[]).filter((k) => pc[k])
+  }
+
+  // Drive the sync one provider per request (Cloudflare free-tier subrequest
+  // cap), all sharing runId so the live dialog streams every provider's progress.
+  async function startSync() {
+    await Promise.all(
+      connectedProviders().map((p) =>
+        fetch(`/api/products/${productId}/sync?provider=${p}&run_id=${syncRunId}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }).catch(() => {}),
+      ),
+    )
+    router.refresh()
+  }
 
   useEffect(() => {
     void (async () => {
@@ -125,21 +149,25 @@ export function ProductSyncPanel({
         </div>
         <button
           type="button"
-          onClick={() => void sync()}
-          disabled={syncing}
+          onClick={() => {
+            setSyncRunId(crypto.randomUUID())
+            setSyncOpen(true)
+          }}
+          disabled={syncOpen}
           className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-60 disabled:cursor-not-allowed flex-shrink-0"
         >
-          {syncing ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing…
-            </>
-          ) : (
-            <>
-              <RefreshCcw className="w-3.5 h-3.5" /> Sync to providers
-            </>
-          )}
+          <RefreshCcw className="w-3.5 h-3.5" /> Sync to providers
         </button>
       </div>
+
+      <SyncStatusDialog
+        open={syncOpen}
+        runId={syncRunId}
+        title="Syncing to providers"
+        expectedRows={connectedProviders().length}
+        onStart={startSync}
+        onClose={() => setSyncOpen(false)}
+      />
 
       <div className="grid grid-cols-2 gap-3">
         <ProviderCard

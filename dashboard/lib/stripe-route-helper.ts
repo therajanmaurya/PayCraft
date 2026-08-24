@@ -21,6 +21,37 @@ interface SyncOptions {
    * each stays well under the cap. Result is merged into the existing sync_state.
    */
   onlyProvider?: "stripe" | "razorpay" | "cashfree" | "google_play" | "app_store"
+  /**
+   * When set, runProductSync emits a `sync_events` row per (product × provider)
+   * start + result so the dashboard can show a live, human-readable progress
+   * dialog. [productName] labels the events; all events share this [runId].
+   */
+  runId?: string
+  productName?: string
+}
+
+const PROVIDER_LABEL: Record<string, string> = {
+  stripe: "Stripe",
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  google_play: "Google Play",
+  app_store: "App Store",
+}
+
+/** Human, per-provider result line for the live sync dialog. */
+function providerSyncMessage(label: string, product: string, entry: ProviderSyncEntry): string {
+  switch (entry.status) {
+    case "synced":
+      return `${label}: ${product} synced`
+    case "draft":
+      return `${label}: ${product} base synced — offer pending (${entry.reason ?? entry.warning ?? "draft"})`
+    case "skipped":
+      return `${label}: skipped — ${entry.reason ?? "not applicable"}`
+    case "failed":
+      return `${label}: failed — ${entry.error ?? entry.reason ?? "error"}`
+    default:
+      return `${label}: ${entry.status}`
+  }
 }
 
 function buildPriceInputs(body: Record<string, any>): PriceInput[] {
@@ -487,12 +518,40 @@ export async function runProductSync(
     app_store: () => appStoreSyncProduct(supabase, opts),
   }
   const keys = onlyProvider ? [onlyProvider] : Object.keys(runners)
-  const results = await Promise.all(keys.map((k) => runners[k]()))
+  const product = opts.productName ?? "product"
+  const emit = opts.runId
+    ? (phase: string, provider: string | null, status: string | null, message: string) =>
+        supabase
+          .rpc("sync_event_emit", {
+            p_run_id: opts.runId,
+            p_tenant_id: opts.tenantId,
+            p_product_id: productId,
+            p_product_name: opts.productName ?? null,
+            p_provider: provider,
+            p_phase: phase,
+            p_status: status,
+            p_message: message,
+          })
+          .then(
+            () => {},
+            () => {},
+          )
+    : null
 
+  // Emit a start + result event per provider so the dashboard renders a live log.
   const providers: Record<string, ProviderSyncEntry> = {}
-  keys.forEach((k, i) => {
-    providers[k] = classifyProvider(results[i])
-  })
+  await Promise.all(
+    keys.map(async (k) => {
+      const label = PROVIDER_LABEL[k] ?? k
+      if (emit) await emit("start", k, null, `Syncing ${product} → ${label}…`)
+      const entry = classifyProvider(await runners[k]())
+      providers[k] = entry
+      if (emit) {
+        const phase = entry.status === "failed" ? "failed" : entry.status === "skipped" ? "skipped" : "ok"
+        await emit(phase, k, entry.status, providerSyncMessage(label, product, entry))
+      }
+    }),
+  )
 
   const values = Object.values(providers)
   const status: ProductSyncSummary["status"] = values.some((v) => v.status === "failed")
@@ -506,6 +565,8 @@ export async function runProductSync(
     p_status: status,
     p_state: providers,
   })
+
+  if (emit) await emit("run_done", null, status, `${product}: ${status}`)
 
   return { status, providers }
 }

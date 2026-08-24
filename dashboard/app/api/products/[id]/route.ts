@@ -3,11 +3,7 @@ export const runtime = "edge"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
-import {
-  stripeSyncProduct,
-  razorpaySyncProduct,
-  cashfreeSyncProduct,
-} from "@/lib/stripe-route-helper"
+import { runProductSync } from "@/lib/stripe-route-helper"
 
 export async function PATCH(
   req: NextRequest,
@@ -53,26 +49,19 @@ export async function PATCH(
     })
   }
 
-  void Promise.all([
-    stripeSyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-      existingStripeProductId: existing.stripe_product_id ?? undefined,
-      existingPrices: existing.stripe_price_id_by_currency ?? undefined,
-    }),
-    razorpaySyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-      existingRazorpayPlanIds: existing.razorpay_plan_id_by_currency ?? undefined,
-    }),
-    cashfreeSyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-    }),
-  ])
+  // Auto-sync the change to EVERY connected provider — including Google Play and
+  // the App Store (e.g. toggling a trial must push the store free-trial offer, not
+  // just the Stripe/Razorpay trial). Fire-and-forget: the durable sync_state + the
+  // dashboard's realtime island reflect the outcome without blocking the response.
+  void runProductSync(supabase, {
+    tenantId: tenant.id,
+    productId: params.id,
+    body,
+    productName: body.display_name,
+    existingStripeProductId: existing.stripe_product_id ?? undefined,
+    existingPrices: existing.stripe_price_id_by_currency ?? undefined,
+    existingRazorpayPlanIds: existing.razorpay_plan_id_by_currency ?? undefined,
+  })
 
   return NextResponse.json({ id })
 }
