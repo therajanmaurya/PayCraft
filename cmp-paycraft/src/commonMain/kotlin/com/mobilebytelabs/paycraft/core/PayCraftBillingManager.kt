@@ -138,6 +138,7 @@ class PayCraftBillingManager(
         _billingState.value = BillingState.Loading
         scope.launch {
             store.saveEmail(normalized)
+            PayCraft.refreshRealtimeIdentity() // re-bind entitlement channel to the new email (audit H3)
             performRegisterAndLogin(normalized)
         }
     }
@@ -336,15 +337,19 @@ class PayCraftBillingManager(
         val currentState = _billingState.value
         PayCraftLogger.onRefreshStatus(email)
 
-        // Don't refresh while a conflict/verification/transfer flow is active —
-        // the concurrent re-register would overwrite OwnershipVerified with DeviceConflict.
-        if (currentState is BillingState.DeviceConflict ||
-            currentState is BillingState.OwnershipVerified ||
-            currentState is BillingState.Loading
-        ) {
+        // Never refresh over a conflict/verification/transfer flow — a concurrent
+        // re-register would overwrite OwnershipVerified with DeviceConflict. These
+        // stay protected even under force.
+        // A `Loading` window is only skipped when NOT forced: a realtime entitlement
+        // push (force=true) MUST still land during an in-flight refresh, otherwise the
+        // live update is silently dropped and falls back to the slow TTL (audit H5).
+        val protectedFlow = currentState is BillingState.DeviceConflict ||
+            currentState is BillingState.OwnershipVerified
+        val loadingSkip = currentState is BillingState.Loading && !force
+        if (protectedFlow || loadingSkip) {
             PayCraftLogger.onFlow(
                 "refreshStatus",
-                "SKIPPED — active flow in progress (state=${currentState::class.simpleName})",
+                "SKIPPED — active flow in progress (state=${currentState::class.simpleName}, force=$force)",
             )
             return
         }
@@ -400,7 +405,7 @@ class PayCraftBillingManager(
 
         val normalized = email.trim().lowercase()
         _userEmail.value = normalized
-        scope.launch { store.saveEmail(normalized) }
+        scope.launch { store.saveEmail(normalized); PayCraft.refreshRealtimeIdentity() }
 
         // If there's an active conflict and the verified email matches → ownership proven.
         val pendingToken = DeviceTokenStore.getToken()
@@ -573,7 +578,7 @@ class PayCraftBillingManager(
         _billingState.value = BillingState.Free
         lastConflict = null
         store.clearCache()
-        scope.launch { store.clearEmail() }
+        scope.launch { store.clearEmail(); PayCraft.refreshRealtimeIdentity() } // drop old user's entitlement channel (audit M1)
     }
 
     // ─── Store5 entitlement gating (Phase 4 — cache-first + revalidate) ───────

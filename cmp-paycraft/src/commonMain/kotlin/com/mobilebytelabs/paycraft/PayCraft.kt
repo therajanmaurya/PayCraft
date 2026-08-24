@@ -539,6 +539,23 @@ object PayCraft {
         realtime.ensureConfigChannel(tenantId) {
             configFetchJob = applicationScope.launch { runCatching { prefetchProducts() } }
         }
+        refreshRealtimeIdentity()
+    }
+
+    /**
+     * (Re)bind the realtime ENTITLEMENT channel to the CURRENT buyer identity
+     * (`email ?: deviceId`). Called on every config apply AND by [BillingManager]
+     * whenever the identity changes — login (device-id → email) and logout
+     * (email → device-id) — so an entitlement push always reaches the buyer's
+     * channel. The realtime client removes the prior channel before subscribing
+     * the new one, so the old user's pings stop after logout. No-op until a
+     * SuiteConfig (hence tenant_id) has landed. Best-effort; failures leave the
+     * TTL/foreground sync as the fallback.
+     */
+    internal fun refreshRealtimeIdentity() {
+        val tenantId = suiteConfig?.tenantId ?: return
+        val koin = KoinPlatform.getKoinOrNull() ?: return
+        val realtime = koin.getOrNull<PayCraftRealtime>() ?: return
         applicationScope.launch {
             val email = runCatching { koin.getOrNull<PayCraftStore>()?.getEmail() }.getOrNull()
             val appUserId = email?.trim()?.lowercase()?.ifBlank { null } ?: deviceId
