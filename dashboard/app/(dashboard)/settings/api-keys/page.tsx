@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { Info } from "lucide-react"
 import { ApiKeysClient } from "@/components/settings/api-keys-client"
 import { requireTenant } from "@/lib/tenant"

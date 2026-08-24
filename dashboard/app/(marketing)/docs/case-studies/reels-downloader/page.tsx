@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { ArrowLeft, CheckCircle2, ExternalLink } from "lucide-react"
 

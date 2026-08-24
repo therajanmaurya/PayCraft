@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
 import { answer } from "@/lib/ai/engine"
 
-export const runtime = "nodejs"
+export const runtime = "edge"
 
 /**
  * PayCraft AI / Growth Copilot — tenant-facing answering endpoint.

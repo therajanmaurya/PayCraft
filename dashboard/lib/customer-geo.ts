@@ -18,8 +18,7 @@
 import type { NextRequest } from "next/server"
 
 const COUNTRY_HEADERS = [
-  "cf-ipcountry",          // Cloudflare
-  "x-vercel-ip-country",   // Vercel
+  "cf-ipcountry",          // Cloudflare (Workers) — the runtime we deploy on
   "x-country",
   "x-geo-country",
 ] as const

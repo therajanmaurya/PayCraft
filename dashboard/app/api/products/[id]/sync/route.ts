@@ -1,22 +1,23 @@
+export const runtime = "edge"
+
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
-import {
-  stripeSyncProduct,
-  razorpaySyncProduct,
-  cashfreeSyncProduct,
-  googlePlaySyncProduct,
-  appStoreSyncProduct,
-} from "@/lib/stripe-route-helper"
+import { runProductSync, type ProviderSyncEntry } from "@/lib/stripe-route-helper"
 
 /**
- * Re-sync a single product to whichever providers are connected. Useful when
- * a row failed initial sync, when the operator changed pricing and wants to
- * push a fresh Stripe Price, or when they re-connected Stripe under a fresh
- * account and need the product re-created on the new account.
+ * Re-sync a single product to whichever providers are connected. Useful when a
+ * row failed initial sync, when the operator changed pricing and wants to push a
+ * fresh Stripe Price / Play offer, or when they re-connected a provider.
  *
- * Body: {} (no params — the route operates on the URL's :id only)
- * Returns: { stripe: { status, message? }, razorpay: { status, message? } }
+ * Delegates to the shared runProductSync orchestrator so classification + durable
+ * sync_state recording is IDENTICAL to the create path — every provider outcome
+ * carries a human reason (skipped/failed/draft), never an opaque "skipped".
+ *
+ * Body: {} (operates on the URL's :id only)
+ * Returns: { <provider>: { status: "ok"|"failed"|"skipped", message? } } — message
+ * is the reason for any non-ok status (not connected / no pricing / type unsupported /
+ * trial offer DRAFT-until-published / real error).
  */
 export async function POST(
   _req: Request,
@@ -25,12 +26,18 @@ export async function POST(
   const { tenant, userId } = await requireTenant()
   const supabase = createClient()
 
+  // Optional ?provider=<name> — sync ONE provider this request. The free
+  // Cloudflare tier caps a request at 50 subrequests, which the full 5-provider
+  // fan-out exceeds, so the dashboard syncs provider-by-provider on the free tier.
+  const providerParam = new URL(_req.url).searchParams.get("provider") as
+    | "stripe" | "razorpay" | "cashfree" | "google_play" | "app_store" | null
+
   // Load the product + its per-currency pricing so the sync helpers have the
   // full inputs (the same shape the create/update routes pass through).
   const { data: product, error } = await supabase
     .from("tenant_products")
     .select(
-      "id, sku, type, display_name, interval, base_price_cents, base_currency, stripe_product_id, stripe_price_id_by_currency, razorpay_plan_id_by_currency, play_product_id, app_store_product_id",
+      "id, sku, type, display_name, interval, base_price_cents, base_currency, trial_enabled, trial_duration_days, stripe_product_id, stripe_price_id_by_currency, razorpay_plan_id_by_currency, play_product_id, app_store_product_id",
     )
     .eq("tenant_id", tenant.id)
     .eq("id", params.id)
@@ -52,147 +59,33 @@ export async function POST(
     })),
   }
 
-  type Report = { status: "ok" | "failed" | "skipped"; message?: string }
-  const stripeReport: Report = { status: "skipped" }
-  const razorpayReport: Report = { status: "skipped" }
+  // One orchestrator does the fan-out, classification, AND durable sync_state
+  // recording (marks `syncing` first, so a tab-close mid-run stays retryable).
+  const summary = await runProductSync(supabase, {
+    tenantId: tenant.id,
+    productId: params.id,
+    body,
+    onlyProvider: providerParam ?? undefined,
+    existingStripeProductId: product.stripe_product_id ?? undefined,
+    existingPrices: product.stripe_price_id_by_currency ?? undefined,
+    existingRazorpayPlanIds: product.razorpay_plan_id_by_currency ?? undefined,
+    existingPlayProductId: product.play_product_id ?? undefined,
+    existingAppStoreProductId: product.app_store_product_id ?? undefined,
+  })
 
-  try {
-    await stripeSyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-      existingStripeProductId: product.stripe_product_id ?? undefined,
-      existingPrices: product.stripe_price_id_by_currency ?? undefined,
-    })
-    const { data: after } = await supabase
-      .from("tenant_products")
-      .select("stripe_product_id")
-      .eq("id", params.id)
-      .single()
-    stripeReport.status = after?.stripe_product_id ? "ok" : "failed"
-    if (!after?.stripe_product_id) {
-      stripeReport.message =
-        "sync helper returned but stripe_product_id is still null — check server logs (Stripe key invalid? connection missing?)"
-    }
-  } catch (e: any) {
-    stripeReport.status = "failed"
-    stripeReport.message = e?.message ?? String(e)
-  }
-
-  try {
-    const res = await razorpaySyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-      existingRazorpayPlanIds: product.razorpay_plan_id_by_currency ?? undefined,
-    })
-    const { data: after } = await supabase
-      .from("tenant_products")
-      .select("razorpay_plan_id_by_currency")
-      .eq("id", params.id)
-      .single()
-    const populated = !!(
-      after?.razorpay_plan_id_by_currency &&
-      Object.keys(after.razorpay_plan_id_by_currency).length > 0
-    )
-    razorpayReport.status = res.ok && populated ? "ok" : "failed"
-    if (razorpayReport.status === "failed" && res.error) {
-      razorpayReport.message = res.error
-    }
-  } catch (e: any) {
-    razorpayReport.status = "failed"
-    razorpayReport.message = e?.message ?? String(e)
-  }
-
-  const cashfreeReport: Report = { status: "skipped" }
-  try {
-    await cashfreeSyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-    })
-    // Cashfree links are stored at the tenant_providers level keyed by
-    // currency. Probe for INR specifically since that's the only currency
-    // Cashfree supports.
-    const { data: cfRow } = await supabase
-      .from("tenant_providers")
-      .select("test_payment_links, live_payment_links")
-      .eq("tenant_id", tenant.id)
-      .eq("provider", "cashfree")
-      .maybeSingle()
-    const links = cfRow?.live_payment_links ?? cfRow?.test_payment_links ?? {}
-    cashfreeReport.status =
-      links && typeof links === "object" && (links as any).INR ? "ok" : "failed"
-    if (cashfreeReport.status === "failed") {
-      cashfreeReport.message =
-        "Cashfree returned no INR link for this product — check Cashfree credentials and product type (Cashfree only handles one-time INR via /pg/links; subscriptions need UPI Autopay)"
-    }
-  } catch (e: any) {
-    cashfreeReport.status = "failed"
-    cashfreeReport.message = e?.message ?? String(e)
-  }
-
-  // Native stores — only meaningful for subscription products; the helpers
-  // self-skip when the tenant hasn't connected the store or the product isn't
-  // a subscription. "ok" = the product id landed on the row.
-  const googlePlayReport: Report = { status: "skipped" }
-  try {
-    const res = await googlePlaySyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-      existingPlayProductId: product.play_product_id ?? undefined,
-    })
-    const { data: after } = await supabase
-      .from("tenant_products")
-      .select("play_product_id")
-      .eq("id", params.id)
-      .single()
-    if (product.type !== "subscription") {
-      googlePlayReport.status = "skipped"
-      googlePlayReport.message = "native store sync only applies to subscription products"
-    } else if (after?.play_product_id) {
-      googlePlayReport.status = "ok"
-      // Synced, but the base plan may still be DRAFT until the app is published.
-      if (res.warning) googlePlayReport.message = res.warning
-    } else {
-      googlePlayReport.status = "failed"
-      googlePlayReport.message =
-        res.error ??
-        "sync helper returned without populating play_product_id — check that google_play credentials + package_name are configured"
-    }
-  } catch (e: any) {
-    googlePlayReport.status = "failed"
-    googlePlayReport.message = e?.message ?? String(e)
-  }
-
-  const appStoreReport: Report = { status: "skipped" }
-  try {
-    const res = await appStoreSyncProduct(supabase, {
-      tenantId: tenant.id,
-      productId: params.id,
-      body,
-      existingAppStoreProductId: product.app_store_product_id ?? undefined,
-    })
-    const { data: after } = await supabase
-      .from("tenant_products")
-      .select("app_store_product_id")
-      .eq("id", params.id)
-      .single()
-    if (product.type !== "subscription") {
-      appStoreReport.status = "skipped"
-      appStoreReport.message = "native store sync only applies to subscription products"
-    } else if (after?.app_store_product_id) {
-      appStoreReport.status = "ok"
-    } else {
-      appStoreReport.status = "failed"
-      appStoreReport.message =
-        res.error ??
-        "sync helper returned without populating app_store_product_id — check that app_store credentials (key_id/issuer_id/bundle_id + .p8) are configured"
-    }
-  } catch (e: any) {
-    appStoreReport.status = "failed"
-    appStoreReport.message = e?.message ?? String(e)
+  // Map the rich per-provider entry to the { status, message } shape the sync
+  // UI renders. `synced`/`draft` → "ok" (draft keeps its message so the DRAFT
+  // caveat still shows); `failed`/`skipped` keep their reason as the message so
+  // the operator always sees WHY a provider didn't fully succeed.
+  const toReport = (e: ProviderSyncEntry): { status: "ok" | "failed" | "skipped"; message?: string } => ({
+    status: e.status === "failed" ? "failed" : e.status === "skipped" ? "skipped" : "ok",
+    message: e.reason,
+  })
+  // Build from whatever providers actually ran — per-provider mode returns just
+  // one, so hardcoding all five would dereference `undefined` and 500.
+  const reports: Record<string, { status: "ok" | "failed" | "skipped"; message?: string }> = {}
+  for (const [name, entry] of Object.entries(summary.providers)) {
+    reports[name] = toReport(entry)
   }
 
   await supabase.rpc("audit_log_emit", {
@@ -201,21 +94,8 @@ export async function POST(
     p_actor_type: "user",
     p_action: "product.sync",
     p_resource: `tenant_products:id=${params.id}`,
-    p_after: {
-      sku: product.sku,
-      stripe: stripeReport,
-      razorpay: razorpayReport,
-      cashfree: cashfreeReport,
-      google_play: googlePlayReport,
-      app_store: appStoreReport,
-    },
+    p_after: { sku: product.sku, sync_status: summary.status, ...reports },
   })
 
-  return NextResponse.json({
-    stripe: stripeReport,
-    razorpay: razorpayReport,
-    cashfree: cashfreeReport,
-    google_play: googlePlayReport,
-    app_store: appStoreReport,
-  })
+  return NextResponse.json(reports)
 }

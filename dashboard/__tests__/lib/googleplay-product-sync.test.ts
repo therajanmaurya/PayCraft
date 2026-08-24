@@ -181,6 +181,114 @@ test("activates the base plan after create → result.activated = true", async (
   expect(result.activationError).toBeUndefined()
 })
 
+/**
+ * CREATE path + FREE_TRIAL offer provisioning. Six fetches:
+ *   0 GET sub → 404 · 1 POST create sub · 2 POST base-plan:activate
+ *   3 GET offer → 404 · 4 POST offer create · 5 POST offer:activate
+ */
+function mockCreatePathWithTrial(opts: { offerActivateOk?: boolean } = {}) {
+  const offerActivateOk = opts.offerActivateOk ?? true
+  const ok = { ok: true, status: 200, text: async () => "{}" }
+  const fetchMock = jest
+    .fn()
+    .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" }) // GET sub
+    .mockResolvedValueOnce(ok) // create sub
+    .mockResolvedValueOnce(ok) // activate base plan
+    .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" }) // GET offer
+    .mockResolvedValueOnce(ok) // create offer
+    .mockResolvedValueOnce(
+      offerActivateOk
+        ? ok
+        : {
+            ok: false,
+            status: 400,
+            text: async () =>
+              JSON.stringify({ error: { code: 400, message: "The app is not published.", status: "FAILED_PRECONDITION" } }),
+          },
+    ) // activate offer
+  ;(global as unknown as { fetch: unknown }).fetch = fetchMock
+  return fetchMock
+}
+
+test("provisions a FREE_TRIAL offer on the base plan when trialDays > 0", async () => {
+  const fetchMock = mockCreatePathWithTrial()
+
+  const result = await syncProductToGooglePlay(
+    { serviceAccountJson: SA_JSON, packageName: "com.example.app" },
+    "prod-trial",
+    "pro-monthly",
+    "Pro Monthly",
+    "month",
+    [
+      { currency: "USD", amountCents: 999 }, // US
+      { currency: "INR", amountCents: 29900 }, // IN
+    ],
+    undefined,
+    14,
+  )
+
+  // The offer create is the 5th fetch (index 4). Assert the compliant shape.
+  const [offerUrl, offerInit] = fetchMock.mock.calls[4]
+  expect(offerUrl).toContain("/subscriptions/pro_monthly/basePlans/pro-monthly-autorenew/offers")
+  expect(offerUrl).toContain("offerId=pro-monthly-autorenew-freetrial")
+  const offer = JSON.parse(offerInit.body as string)
+  expect(offer.offerId).toBe("pro-monthly-autorenew-freetrial")
+  // Single free-trial phase of the requested length, priced free in every base-plan region.
+  expect(offer.phases).toHaveLength(1)
+  expect(offer.phases[0].duration).toBe("P14D")
+  expect(offer.phases[0].recurrenceCount).toBe(1)
+  expect(offer.phases[0].regionalConfigs.map((c: any) => c.regionCode)).toEqual(["US", "IN"])
+  expect(offer.phases[0].regionalConfigs.every((c: any) => c.free && Object.keys(c.free).length === 0)).toBe(true)
+  // New-subscriber-only acquisition offer + offer-level availability + tag.
+  expect(offer.targeting.acquisitionRule.scope.thisSubscription).toEqual({})
+  expect(offer.regionalConfigs.map((c: any) => c.regionCode)).toEqual(["US", "IN"])
+  expect(offer.regionalConfigs.every((c: any) => c.newSubscriberAvailability === true)).toBe(true)
+  expect(offer.offerTags).toEqual([{ tag: "free-trial" }])
+  // 6th fetch activates the offer.
+  const [actUrl] = fetchMock.mock.calls[5]
+  expect(actUrl).toContain("/offers/pro-monthly-autorenew-freetrial:activate")
+  expect(result.freeTrialOfferId).toBe("pro-monthly-autorenew-freetrial")
+  expect(result.trialOfferActivated).toBe(true)
+})
+
+test("no trial → no offer calls and freeTrialOfferId is null", async () => {
+  const fetchMock = mockCreatePath() // only 3 responses (no offer path)
+
+  const result = await syncProductToGooglePlay(
+    { serviceAccountJson: SA_JSON, packageName: "com.example.app" },
+    "prod-notrial",
+    "pro-monthly",
+    "Pro Monthly",
+    "month",
+    [{ currency: "USD", amountCents: 999 }],
+    undefined,
+    0, // no trial
+  )
+
+  expect(fetchMock).toHaveBeenCalledTimes(3) // get + create + activate only
+  expect(result.freeTrialOfferId).toBeNull()
+})
+
+test("trial-offer activation is best-effort: app-not-published does NOT fail the sync", async () => {
+  const fetchMock = mockCreatePathWithTrial({ offerActivateOk: false })
+
+  const result = await syncProductToGooglePlay(
+    { serviceAccountJson: SA_JSON, packageName: "com.example.app" },
+    "prod-trial2",
+    "pro-annual",
+    "Pro Annual",
+    "year",
+    [{ currency: "USD", amountCents: 9950 }],
+    undefined,
+    7,
+  )
+
+  expect(result.freeTrialOfferId).toBe("pro-annual-autorenew-freetrial")
+  expect(result.trialOfferActivated).toBe(false)
+  expect(result.trialOfferError).toMatch(/not activated/i)
+  expect(fetchMock).toHaveBeenCalledTimes(6) // full path, no throw
+})
+
 test("activation is best-effort: an app-not-published 400 does NOT fail the sync", async () => {
   const fetchMock = mockCreatePath({ activateOk: false })
 

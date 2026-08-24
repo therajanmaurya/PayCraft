@@ -296,27 +296,52 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     (tenantRow?.["monetization_mode"] as string | undefined) ??
     null
 
+  // PayCraft-hosted default legal URLs. The SDK paywall footer renders the
+  // Privacy & Terms links from paywall.privacy_url / paywall.terms_url. When a
+  // tenant hasn't configured their own, fall back to PayCraft's hosted,
+  // store-compliant pages so EVERY paywall carries valid legal links (Google
+  // Play and the App Store require them). A non-empty tenant value always wins.
+  const PAYCRAFT_PRIVACY_URL = "https://paycraft.mobilebytesensei.com/legal/privacy"
+  const PAYCRAFT_TERMS_URL = "https://paycraft.mobilebytesensei.com/legal/terms"
+
+  const basePaywall = paywallRes.data
+    ? { ...paywallRes.data, branding: brandingFinal }
+    : {
+        template: "branded-stack",
+        branding: brandingFinal,
+        theme_jsonb: {},
+        hero_title: "Upgrade to Premium",
+        hero_subtitle: "Enjoy ad-free experience, HD downloads, and exclusive features",
+        value_props: [],
+        cta_continue: "Continue",
+        cta_get_premium: "Get Premium",
+        restore_label: "Restore Your Premium",
+        success_title: "Welcome to Premium!",
+        success_message: "You now have access to all premium features.",
+        success_cta_label: "Continue to app",
+        // Trial-terms disclosure (migration 077) — defaults match the SDK strings.xml
+        // fallbacks so an un-configured tenant still ships a Play-compliant disclosure.
+        trial_terms_template: "{days}-day free trial, then {price}",
+        trial_disclosure_title: "{days}-day free trial included",
+        trial_disclosure_body:
+          "Your free trial converts to a paid subscription automatically when it ends. Cancel anytime before then in your store subscription settings to avoid being charged.",
+      }
+  const paywallWithLegal = {
+    ...basePaywall,
+    privacy_url:
+      ((basePaywall as Record<string, unknown>)["privacy_url"] as string | undefined) ||
+      PAYCRAFT_PRIVACY_URL,
+    terms_url:
+      ((basePaywall as Record<string, unknown>)["terms_url"] as string | undefined) ||
+      PAYCRAFT_TERMS_URL,
+  }
+
   const body = {
     tenant_id: tenantId,
     plan: tenantRes.data?.plan,
     products: pricedProducts,
     providers: orderedProviders,
-    paywall: paywallRes.data
-      ? { ...paywallRes.data, branding: brandingFinal }
-      : {
-          template: "branded-stack",
-          branding: brandingFinal,
-          theme_jsonb: {},
-          hero_title: "Upgrade to Premium",
-          hero_subtitle: "Enjoy ad-free experience, HD downloads, and exclusive features",
-          value_props: [],
-          cta_continue: "Continue",
-          cta_get_premium: "Get Premium",
-          restore_label: "Restore Your Premium",
-          success_title: "Welcome to Premium!",
-          success_message: "You now have access to all premium features.",
-          success_cta_label: "Continue to app",
-        },
+    paywall: paywallWithLegal,
     locale: localeCountry,
     geo_country: geoCountry,
     geo_source: geoSource,

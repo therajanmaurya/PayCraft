@@ -12,12 +12,14 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -29,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -42,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -74,6 +78,7 @@ import com.mobilebytelabs.paycraft.generated.resources.paycraft_restore_success_
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_restore_title
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_restore_verifying_identity
 import com.mobilebytelabs.paycraft.model.BillingState
+import com.mobilebytelabs.paycraft.ui.components.PayCraftPaywallHeader
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftThemeProvider
 import kotlinx.coroutines.delay
@@ -88,6 +93,10 @@ private const val TAG_RESTORE_SUCCESS = "paycraft_restore_success_message"
 private const val TAG_RESTORE_ERROR = "paycraft_restore_error_message"
 private const val TAG_RESTORE_GOOGLE = "paycraft_restore_google_button"
 private const val TAG_RESTORE_APPLE = "paycraft_restore_apple_button"
+
+// Professional restore surface tuning — consistent with the paywall design language.
+private val CtaHeight = 54.dp
+private val CtaShape = RoundedCornerShape(14.dp)
 
 /**
  * Modal bottom sheet that lets a user restore their subscription.
@@ -145,6 +154,8 @@ fun PayCraftRestore(
             onDismissRequest = onDismiss,
             sheetState = sheetState,
             dragHandle = null,
+            containerColor = PayCraftTheme.colors.surface,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             modifier = modifier.testTag(TAG_RESTORE_SHEET),
         ) {
             PayCraftRestoreContent(
@@ -221,49 +232,41 @@ fun PayCraftRestoreContent(
     val spacing = PayCraftTheme.spacing
     val paycraftColors = PayCraftTheme.colors
 
+    // Tenant branding mark (dashboard-configured) for the hero, falling back to a
+    // premium star so the restore surface matches the paywall's branded header.
+    val heroIconSvg = PayCraft.suiteConfigFlow.collectAsState().value?.paywall?.heroIconSvg
+
     Column(
         modifier = modifier
             .fillMaxWidth()
             .imePadding()
-            .padding(horizontal = spacing.lg, vertical = spacing.sm)
-            .padding(bottom = 40.dp),
+            .padding(horizontal = spacing.lg)
+            .padding(top = spacing.sm, bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(spacing.md),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Header icon
+        // Grabber — subtle drag affordance (the sheet uses dragHandle = null).
         Box(
-            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(64.dp)
+                .padding(bottom = spacing.xs)
+                .size(width = 36.dp, height = 4.dp)
                 .background(
-                    color = paycraftColors.accentContainer,
-                    shape = CircleShape,
+                    color = paycraftColors.onSurfaceVariant.copy(alpha = 0.28f),
+                    shape = RoundedCornerShape(2.dp),
                 ),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Star,
-                contentDescription = null,
-                tint = paycraftColors.onAccentContainer,
-                modifier = Modifier.size(32.dp),
-            )
-        }
-
-        Text(
-            text = stringResource(Res.string.paycraft_restore_title),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
         )
 
-        Text(
-            text = if (hasOAuth) {
+        // Branded hero header — same component + language as the paywall.
+        PayCraftPaywallHeader(
+            title = stringResource(Res.string.paycraft_restore_title),
+            subtitle = if (hasOAuth) {
                 stringResource(Res.string.paycraft_restore_oauth_description)
             } else {
                 stringResource(Res.string.paycraft_restore_description)
             },
-            style = MaterialTheme.typography.bodyMedium,
-            color = paycraftColors.onSurfaceVariant,
-            textAlign = TextAlign.Center,
+            icon = Icons.Filled.Star,
+            heroIconSvg = heroIconSvg,
+            modifier = Modifier.fillMaxWidth(),
         )
 
         Spacer(modifier = Modifier.height(spacing.xs))
@@ -279,20 +282,25 @@ fun PayCraftRestoreContent(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .height(CtaHeight)
                         .testTag(TAG_RESTORE_GOOGLE),
                     enabled = !isRestoring && restoreResult == null,
+                    shape = CtaShape,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = paycraftColors.onSurface,
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = spacing.hairline,
+                        color = paycraftColors.outline,
+                    ),
                 ) {
-                    if (isRestoring) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(Res.string.paycraft_restore_verifying_identity))
-                    } else {
-                        Text(stringResource(Res.string.paycraft_restore_sign_in_google))
-                    }
+                    RestoreCtaLabel(
+                        loading = isRestoring,
+                        loadingText = stringResource(Res.string.paycraft_restore_verifying_identity),
+                        idleText = stringResource(Res.string.paycraft_restore_sign_in_google),
+                        spinnerColor = paycraftColors.onSurface,
+                        spacing = spacing.sm,
+                    )
                 }
             }
 
@@ -305,41 +313,40 @@ fun PayCraftRestoreContent(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .height(CtaHeight)
                         .testTag(TAG_RESTORE_APPLE),
                     enabled = !isRestoring && restoreResult == null,
+                    shape = CtaShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = paycraftColors.onSurface,
                         contentColor = paycraftColors.surface,
                     ),
                 ) {
-                    if (isRestoring) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = paycraftColors.surface,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(Res.string.paycraft_restore_verifying_identity))
-                    } else {
-                        Text(stringResource(Res.string.paycraft_restore_sign_in_apple))
-                    }
+                    RestoreCtaLabel(
+                        loading = isRestoring,
+                        loadingText = stringResource(Res.string.paycraft_restore_verifying_identity),
+                        idleText = stringResource(Res.string.paycraft_restore_sign_in_apple),
+                        spinnerColor = paycraftColors.surface,
+                        spacing = spacing.sm,
+                    )
                 }
             }
 
             // Divider before email fallback
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = spacing.xs),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(spacing.sm),
             ) {
-                HorizontalDivider(modifier = Modifier.weight(1f))
+                HorizontalDivider(modifier = Modifier.weight(1f), color = paycraftColors.divider)
                 Text(
                     text = stringResource(Res.string.paycraft_restore_or_email),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = paycraftColors.onSurfaceVariant,
                 )
-                HorizontalDivider(modifier = Modifier.weight(1f))
+                HorizontalDivider(modifier = Modifier.weight(1f), color = paycraftColors.divider)
             }
         }
 
@@ -359,11 +366,18 @@ fun PayCraftRestoreContent(
             label = { Text(stringResource(Res.string.paycraft_email_label)) },
             placeholder = { Text(stringResource(Res.string.paycraft_email_hint)) },
             leadingIcon = {
-                Icon(Icons.Filled.AccountCircle, contentDescription = null)
+                Icon(Icons.Filled.Email, contentDescription = null)
             },
             isError = emailError != null,
             singleLine = true,
             enabled = !isRestoring,
+            shape = CtaShape,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = paycraftColors.accent,
+                focusedLeadingIconColor = paycraftColors.accent,
+                focusedLabelColor = paycraftColors.accent,
+                cursorColor = paycraftColors.accent,
+            ),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Email,
                 imeAction = ImeAction.Done,
@@ -443,9 +457,14 @@ fun PayCraftRestoreContent(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .height(CtaHeight)
                 .testTag(TAG_RESTORE_BUTTON),
             enabled = !isRestoring && email.isNotBlank() && restoreResult == null,
+            shape = CtaShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = paycraftColors.accent,
+                contentColor = paycraftColors.onAccent,
+            ),
         ) {
             if (isRestoring && !hasOAuth) {
                 Row(
@@ -461,8 +480,30 @@ fun PayCraftRestoreContent(
                     Text(stringResource(Res.string.paycraft_restore_checking))
                 }
             } else {
-                Text(stringResource(Res.string.paycraft_restore_button))
+                Text(
+                    stringResource(Res.string.paycraft_restore_button),
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
+        }
+
+        // Trust line — reassurance the restore is secure (icon-only, locale-safe).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Lock,
+                contentDescription = null,
+                tint = paycraftColors.onSurfaceVariant,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                text = stringResource(Res.string.paycraft_restore_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = paycraftColors.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
 
         TextButton(
@@ -480,6 +521,28 @@ fun PayCraftRestoreContent(
     }
 }
 
+/** Shared CTA label — spinner + text while restoring, plain text otherwise. */
+@Composable
+private fun RestoreCtaLabel(
+    loading: Boolean,
+    loadingText: String,
+    idleText: String,
+    spinnerColor: androidx.compose.ui.graphics.Color,
+    spacing: androidx.compose.ui.unit.Dp,
+) {
+    if (loading) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp,
+            color = spinnerColor,
+        )
+        Spacer(modifier = Modifier.width(spacing))
+        Text(loadingText, fontWeight = FontWeight.Medium)
+    } else {
+        Text(idleText, fontWeight = FontWeight.Medium)
+    }
+}
+
 @Composable
 private fun ResultCard(
     title: String,
@@ -488,36 +551,44 @@ private fun ResultCard(
     testTag: String,
     modifier: Modifier = Modifier,
 ) {
+    val colors = PayCraftTheme.colors
+    val spacing = PayCraftTheme.spacing
     val bgColor = if (isSuccess) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+        colors.activeBadge.copy(alpha = 0.12f)
     } else {
-        MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
+        colors.errorContainer
     }
-    val textColor = if (isSuccess) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.error
-    }
+    val accentColor = if (isSuccess) colors.activeBadge else colors.onErrorContainer
+    val icon: ImageVector = if (isSuccess) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline
 
-    Column(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(bgColor, RoundedCornerShape(12.dp))
-            .padding(16.dp)
+            .background(bgColor, RoundedCornerShape(14.dp))
+            .padding(spacing.md)
             .testTag(testTag),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+        verticalAlignment = Alignment.Top,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = textColor,
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = accentColor,
+            modifier = Modifier.size(22.dp),
         )
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodySmall,
-            color = textColor.copy(alpha = 0.85f),
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(spacing.xs / 2)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = accentColor,
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = accentColor.copy(alpha = 0.85f),
+            )
+        }
     }
 }
 

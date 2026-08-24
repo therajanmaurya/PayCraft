@@ -11,17 +11,17 @@
 #             L4 LOCAL READY WAIT  poll localhost:3000 until 200
 #             L5 LOCAL SMOKE       curl /api/health (expects env=local)
 #
-#   --prod    Promote development → main and let Vercel auto-deploy production
-#             1 PRE-FLIGHT     verify CLIs/vault/vercel/gh; warn on un-pushed dev commits;
+#   --prod    Promote dev → main, then DIRECTLY deploy the dashboard to Cloudflare Workers
+#             1 PRE-FLIGHT     verify CLIs/vault/cloudflare/gh; warn on un-pushed dev commits;
 #                              TYPECHECK the dashboard (tsc --noEmit) so a broken build never
 #                              reaches main (--skip-build to bypass)
-#             2 SECRETS SYNC   vault → vercel env (production scope)
+#             2 SECRETS SYNC   vault → Cloudflare Worker secrets (best-effort; see phase note)
 #             3 MIGRATIONS     detect pending (db push --dry-run) → DESTRUCTIVE-op scan (gated by
 #                              --allow-destructive) → pre-push schema BACKUP → supabase db push →
 #                              POST-PUSH VERIFY (0 pending). Aborts the chain on any failure.
 #             3.5 FUNCTIONS DEPLOY  vault-mediated supabase functions deploy (Edge Functions)
-#             4 PROMOTE        open PR development → main, merge it (fast-forward)
-#             5 WAIT VERCEL    poll Vercel API for production deploy of main → READY (aborts on ERROR)
+#             4 PROMOTE        open PR dev → main, merge it (fast-forward) — source-of-truth replica
+#             5 DEPLOY CLOUDFLARE  build + `npm run cf:deploy` → dashboard on Cloudflare Workers (OpenNext)
 #             6 SMOKE          curl /api/health + /auth/login + root + Edge Function /config reachability
 #
 # Dry-run by default — pass --apply --confirm-production for mutating prod phases. Dry-run still
@@ -49,9 +49,8 @@ STATE_DIR="$PAYCRAFT_SRC/infra/deploy/.state"
 LEDGER="$PAYCRAFT_SRC/infra/deploy/.deploy-ledger.jsonl"
 mkdir -p "$STATE_DIR"
 
-VERCEL_PROJECT_ID="prj_HQ7IQe4XyxFk3SU0dV6X3n2n7kme"
-VERCEL_TEAM_ID="team_yIBRq8fQTksr6aM3K27PgCgI"
 PROD_URL="https://paycraft.mobilebytesensei.com"
+CF_PAGES_PROJECT="paycraft"   # Cloudflare Pages project (next-on-pages, edge runtime + nodejs_compat)
 GITHUB_REPO="MobileByteLabs/PayCraft"
 SUPABASE_REF="mlwfgytjxlqyfxcgpysm"
 
@@ -156,27 +155,8 @@ run_phase() {
     fi
 }
 
-# vercel API helper — uses cached CLI auth (~/Library/Application Support/com.vercel.cli/auth.json)
-vercel_api() {
-    local path="$1" method="${2:-GET}" body="${3:-}"
-    local token
-    token=$(node -e "console.log(JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(), 'Library/Application Support/com.vercel.cli/auth.json'),'utf-8')).token)" 2>/dev/null) || return 1
-    if [[ -n "$body" ]]; then
-        node -e "
-          fetch('https://api.vercel.com${path}', {
-            method: '${method}',
-            headers: { 'Authorization': 'Bearer ${token}', 'Content-Type': 'application/json' },
-            body: ${body}
-          }).then(r=>r.text()).then(t=>console.log(t));
-        "
-    else
-        node -e "
-          fetch('https://api.vercel.com${path}', {
-            headers: { 'Authorization': 'Bearer ${token}' }
-          }).then(r=>r.text()).then(t=>console.log(t));
-        "
-    fi
-}
+# (Vercel removed 2026-08-23 — dashboard deploys to Cloudflare Workers; the old
+#  vercel_api helper + VERCEL_* project vars are gone.)
 
 # ═══════════════════════════════════════════════════════════
 # Phase implementations
@@ -190,13 +170,13 @@ phase_1_preflight() {
 
     cd "$PAYCRAFT_SRC"
 
-    # Warn on un-pushed local development commits — prod promotes origin/development, so any
+    # Warn on un-pushed local dev commits — prod promotes origin/dev, so any
     # commit not pushed there will NOT deploy. (Warning only; you may be deploying intentionally.)
-    git fetch origin development 2>/dev/null || true
+    git fetch origin dev 2>/dev/null || true
     local unpushed
-    unpushed=$(git rev-list --count origin/development..development 2>/dev/null || echo 0)
+    unpushed=$(git rev-list --count origin/dev..dev 2>/dev/null || echo 0)
     if [[ "$unpushed" =~ ^[0-9]+$ && "$unpushed" -gt 0 ]]; then
-        echo "  ⚠ local 'development' is $unpushed commit(s) ahead of origin/development — those will NOT deploy."
+        echo "  ⚠ local 'dev' is $unpushed commit(s) ahead of origin/dev — those will NOT deploy."
         echo "    Push them first (/git-session-commit) if you intend to ship them."
     fi
 
@@ -230,9 +210,45 @@ phase_1_preflight() {
 }
 
 phase_2_secrets_sync() {
-    local flag=""
-    [[ "$APPLY" = "true" ]] && flag="--apply"
-    bash "$PAYCRAFT_SRC/infra/sync-to-vercel.sh" $flag --env production
+    # Runtime secrets → Cloudflare Worker secrets (migrated off Vercel 2026-08-23).
+    # Vault is the SoT: the 15 core runtime secrets already live in the mbs vault
+    # with real values (Vercel's prod env is type "Sensitive" = write-only, so it
+    # could never be the migration source). The AUTHORITATIVE alias→env-NAME mapping
+    # lives in dashboard/cloudflare-secrets.map (handles the dashboard reading names
+    # that differ from vault env_var fields + values needed under two names). We loop
+    # the map: pull each alias from the vault, `wrangler secret put` it under each
+    # env name. An alias that does not resolve (nullable, e.g. STRIPE_CONNECT_CLIENT_ID)
+    # is SKIPPED with a warning, never fatal.
+    local map="$PAYCRAFT_SRC/dashboard/cloudflare-secrets.map"
+    if [[ ! -f "$map" ]]; then
+        echo "  ↷ cloudflare-secrets.map not found — skipping (set Worker secrets via Cloudflare dashboard)"; return 0
+    fi
+    if [[ "$APPLY" != "true" ]]; then
+        echo "  [DRY] would set these Worker secrets on $CF_WORKER_NAME (value from vault alias):"
+        sed -E 's/#.*//; /^[[:space:]]*$/d; s/[[:space:]]//g' "$map" | while IFS='=' read -r env alias; do
+            [[ -z "$env" || -z "$alias" ]] && continue
+            printf "        %-34s ← %s\n" "$env" "$alias"
+        done
+        return 0
+    fi
+    local set=0 skipped=0 failed=0
+    while IFS='=' read -r env alias; do
+        env="$(echo "$env" | tr -d '[:space:]')"; alias="$(echo "$alias" | tr -d '[:space:]')"
+        [[ -z "$env" || -z "$alias" || "$env" == \#* ]] && continue
+        local vf; vf=$(mktemp -t cf-sec-XXXXXX); chmod 600 "$vf"
+        if ! bash "$FW_ROOT/core/scripts/secrets-get.sh" "$alias" --to-file "$vf" 2>/dev/null || [[ ! -s "$vf" ]]; then
+            echo "  ⚠ $env ← $alias : not in vault (skipped — nullable)"; skipped=$((skipped+1)); rm -f "$vf"; continue
+        fi
+        if ( cd "$PAYCRAFT_SRC/dashboard" && npx --yes wrangler pages secret put "$env" --project-name "$CF_PAGES_PROJECT" < "$vf" >/dev/null 2>&1 ); then
+            echo "  ✓ $env ← $alias"; set=$((set+1))
+        else
+            echo "  ✗ $env ← $alias : wrangler secret put failed (token Workers-scope? Worker exists?)"; failed=$((failed+1))
+        fi
+        rm -f "$vf"
+    done < <(grep -vE '^\s*#' "$map")
+    echo "  Worker secrets — set: $set · skipped(nullable): $skipped · failed: $failed"
+    [[ "$failed" -eq 0 ]] || echo "  ⚠ some secrets failed — set them via Cloudflare dashboard; deploy continues"
+    return 0
 }
 
 phase_3_migrations() {
@@ -399,48 +415,48 @@ phase_3_5_functions() {
     unset SUPABASE_ACCESS_TOKEN
 }
 
-# Phase 4 — promote development → main as exact fast-forward replica
+# Phase 4 — promote dev → main as exact fast-forward replica
 phase_4_promote() {
     cd "$PAYCRAFT_SRC"
 
-    # Ensure local main + development are up to date
-    git fetch origin development main 2>/dev/null
+    # Ensure local main + dev are up to date
+    git fetch origin dev main 2>/dev/null
 
     local dev_sha main_sha
-    dev_sha=$(git rev-parse origin/development)
+    dev_sha=$(git rev-parse origin/dev)
     main_sha=$(git rev-parse origin/main)
 
     if [[ "$dev_sha" = "$main_sha" ]]; then
-        echo "  ✓ main already at development HEAD ($dev_sha) — nothing to promote"
+        echo "  ✓ main already at dev HEAD ($dev_sha) — nothing to promote"
         return 0
     fi
 
-    echo "  development: $dev_sha"
+    echo "  dev: $dev_sha"
     echo "  main:        $main_sha"
-    echo "  Promoting development → main..."
+    echo "  Promoting dev → main..."
 
     if [[ "$APPLY" != "true" ]]; then
         local ahead
-        ahead=$(git rev-list --count origin/main..origin/development)
-        echo "  [DRY] would open PR development → main ($ahead commits ahead)"
-        echo "  [DRY] would auto-merge with --merge to keep main = development"
+        ahead=$(git rev-list --count origin/main..origin/dev)
+        echo "  [DRY] would open PR dev → main ($ahead commits ahead)"
+        echo "  [DRY] would auto-merge with --merge to keep main = dev"
         return 0
     fi
 
     # Check for an existing open dev→main PR; reuse if present
     local pr_num
-    pr_num=$(gh pr list --base main --head development --state open --json number --jq '.[0].number // empty' 2>/dev/null)
+    pr_num=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty' 2>/dev/null)
     if [[ -z "$pr_num" ]]; then
-        echo "  Opening PR development → main..."
-        pr_num=$(gh pr create --base main --head development \
-            --title "release: promote development → main ($(date -u +%Y-%m-%dT%H:%M:%SZ))" \
+        echo "  Opening PR dev → main..."
+        pr_num=$(gh pr create --base main --head dev \
+            --title "release: promote dev → main ($(date -u +%Y-%m-%dT%H:%M:%SZ))" \
             --body "Auto-opened by /paycraft-deploy Phase 4 PROMOTE.
 
-Source: origin/development @ ${dev_sha}
+Source: origin/dev @ ${dev_sha}
 Target: origin/main @ ${main_sha}
-Diff:   $(git rev-list --count origin/main..origin/development) commits
+Diff:   $(git rev-list --count origin/main..origin/dev) commits
 
-This PR is fast-forward-only — main is kept as an exact replica of development at promote time. No manual edits should land on main." 2>&1 | grep -oE 'https://[^ ]+/[0-9]+' | grep -oE '[0-9]+$' | head -1)
+This PR is fast-forward-only — main is kept as an exact replica of dev at promote time. No manual edits should land on main." 2>&1 | grep -oE 'https://[^ ]+/[0-9]+' | grep -oE '[0-9]+$' | head -1)
         if [[ -z "$pr_num" ]]; then
             echo "  ✗ Failed to open PR"; return 1
         fi
@@ -468,58 +484,59 @@ This PR is fast-forward-only — main is kept as an exact replica of development
 }
 
 # Phase 5 — poll Vercel API until the deploy of the latest main commit is READY
-phase_5_wait_vercel() {
+# Phase 5 — DIRECT deploy the dashboard to Cloudflare Workers (OpenNext).
+# Migrated off Vercel auto-deploy (2026-08-23): the dashboard runs on Cloudflare
+# Workers via @opennextjs/cloudflare, so prod deploy is a direct build+push we own
+# — no waiting on an external CI/Vercel webhook. `npm run cf:deploy` =
+# `opennextjs-cloudflare build && … deploy` (reads CLOUDFLARE_ACCOUNT_ID +
+# CLOUDFLARE_API_TOKEN, pulled SV32-safe from the vault).
+phase_5_deploy_cloudflare() {
+    local dash="$PAYCRAFT_SRC/dashboard"
     if [[ "$APPLY" != "true" ]]; then
-        echo "  [DRY] would poll Vercel API for production deploy of latest main commit"
+        echo "  [DRY] would build + deploy dashboard → Cloudflare Workers (npm run cf:deploy)"
         return 0
     fi
+    command -v npx >/dev/null 2>&1 || { echo "  ✗ node/npx required for cf:deploy"; return 1; }
+    # next-on-pages Pages deploys don't require a repo wrangler.jsonc — the
+    # `nodejs_compat` compatibility flag lives in the Cloudflare Pages project
+    # settings (the migration off OpenNext/Workers removed the Workers-format
+    # wrangler.jsonc on purpose). Treat its absence as informational, not fatal.
+    [[ -f "$dash/wrangler.jsonc" ]] || echo "  ↷ no dashboard/wrangler.jsonc — relying on Pages project settings (nodejs_compat)"
 
-    cd "$PAYCRAFT_SRC"
-    git fetch origin main 2>/dev/null
-    local target_sha
-    target_sha=$(git rev-parse origin/main | cut -c1-7)
-    echo "  Waiting for Vercel production deploy of commit ${target_sha}..."
+    # Pull Cloudflare creds from the vault (SV32-safe; tmpfiles shredded on return).
+    local tmpd; tmpd=$(mktemp -d); trap 'rm -rf "$tmpd" 2>/dev/null' RETURN
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" mbs-cloudflare-account-id      --to-file "$tmpd/acct" 2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-account-id"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" mbs-cloudflare-pages-api-token --to-file "$tmpd/tok"  2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-pages-api-token"; return 1; }
 
-    local start=$(date +%s)
-    local deadline=$((start + 15*60))   # 15-min cap (Vercel queue can stall on parallel failed previews)
-    local last_state=""
-    while [[ $(date +%s) -lt $deadline ]]; do
-        local raw
-        raw=$(vercel_api "/v6/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_TEAM_ID}&limit=5&target=production" 2>/dev/null)
-        local match
-        match=$(node -e "
-            const j = JSON.parse(\`${raw//\`/\\\`}\`);
-            const d = (j.deployments || []).find(d => {
-                const sha = (d.meta?.githubCommitSha || d.meta?.gitCommitSha || '').slice(0,7);
-                return sha === '${target_sha}';
-            });
-            if (d) console.log(JSON.stringify({id: d.uid, state: d.state, url: d.url, inspector: d.inspectorUrl}));
-        " 2>/dev/null)
-        if [[ -n "$match" ]]; then
-            local state url inspector
-            state=$(echo "$match" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf-8')).state)")
-            url=$(echo "$match" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf-8')).url)")
-            inspector=$(echo "$match" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf-8')).inspector)")
-            if [[ "$state" != "$last_state" ]]; then
-                printf "  [%4ds] state=%-10s url=%s\n" "$(($(date +%s)-start))" "$state" "$url"
-                last_state="$state"
-            fi
-            case "$state" in
-                READY)
-                    echo "  ✓ Production deploy READY"
-                    echo "    Inspector: $inspector"
-                    echo "    URL:       https://$url"
-                    echo "$url" > "$STATE_DIR/last-deploy-url"
-                    return 0 ;;
-                ERROR|CANCELED|BLOCKED)
-                    echo "  ✗ Production deploy ended in $state"
-                    echo "    Inspector: $inspector"
-                    return 1 ;;
-            esac
-        fi
-        sleep 8
-    done
-    echo "  ✗ Timeout (10 min) waiting for Vercel production deploy"
+    # CRITICAL: Next.js INLINES every `process.env.NEXT_PUBLIC_*` at BUILD time.
+    # A developer's `.env.local` (local Supabase http://127.0.0.1:54321) would bake
+    # LOCAL urls into the PROD Worker bundle → runtime Supabase calls hit 127.0.0.1
+    # and fail instantly. So materialize the PROD public values from the vault into
+    # `.env.production.local` (Next precedence: .env.production.local > .env.local)
+    # right before the build. Gitignored via dashboard/.gitignore `.env*.local`.
+    local ep="$dash/.env.production.local"
+    : > "$ep"; chmod 600 "$ep"
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" framework-supabase-url      --to-file "$tmpd/sburl" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-url"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" framework-supabase-anon-key --to-file "$tmpd/sbanon" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-anon-key"; return 1; }
+    {
+        printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n'          "$(cat "$tmpd/sburl")"
+        printf 'NEXT_PUBLIC_PAYCRAFT_SUPABASE_URL=%s\n' "$(cat "$tmpd/sburl")"
+        printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n'     "$(cat "$tmpd/sbanon")"
+        printf 'NEXT_PUBLIC_PAYCRAFT_DASHBOARD_URL=%s\n' "https://paycraft.mobilebytesensei.com"
+    } >> "$ep"
+    echo "  ✓ Prod build-time env materialized → .env.production.local (public NEXT_PUBLIC_* from vault)"
+
+    echo "  Building + deploying dashboard → Cloudflare Pages (next-on-pages, edge)…"
+    [[ -d "$dash/node_modules" ]] || ( cd "$dash" && npm install --no-audit --no-fund --legacy-peer-deps >/dev/null 2>&1 )
+    if ( cd "$dash" \
+          && CLOUDFLARE_ACCOUNT_ID="$(cat "$tmpd/acct")" \
+             CLOUDFLARE_API_TOKEN="$(cat "$tmpd/tok")" \
+             npm run pages:deploy ); then
+        echo "  ✓ Dashboard deployed to Cloudflare Pages ($CF_PAGES_PROJECT → https://$CF_PAGES_PROJECT.pages.dev)"
+        echo "$PROD_URL" > "$STATE_DIR/last-deploy-url"
+        return 0
+    fi
+    echo "  ✗ pages:deploy failed — check next-on-pages/wrangler output above (edge-runtime on all routes? nodejs_compat set? token Pages-scope?)"
     return 1
 }
 
@@ -578,21 +595,18 @@ emit_status() {
     echo ""
 
     echo "─── prereqs ────────────────────────────────────────"
-    printf "cli_vercel:    %s\n"   "$(command -v vercel >/dev/null && echo INSTALLED || echo MISSING)"
+    printf "cli_wrangler:  %s\n"   "$(command -v npx >/dev/null && echo AVAILABLE || echo MISSING)"
     printf "cli_supabase:  %s\n"   "$(command -v supabase >/dev/null && echo INSTALLED || echo MISSING)"
     printf "cli_gh:        %s\n"   "$(command -v gh >/dev/null && echo INSTALLED || echo MISSING)"
-    printf "auth_vercel:   %s\n"   "$(vercel whoami 2>/dev/null || echo NOT-LOGGED-IN)"
     printf "auth_gh:       %s\n"   "$(gh auth status 2>&1 | grep -oE 'Logged in to github.com as [^ ]+' | head -1 || echo NOT-LOGGED-IN)"
-    printf "link_vercel:   %s\n"   "$([ -f $PAYCRAFT_SRC/dashboard/.vercel/project.json ] && echo LINKED || echo NOT-LINKED)"
+    printf "cf_worker_cfg: %s\n"   "$([ -f $PAYCRAFT_SRC/dashboard/wrangler.jsonc ] && echo CONFIGURED || echo MISSING)"
     echo ""
 
-    echo "─── vault (6 secrets — BYOK + framework-supabase) ───"
+    echo "─── vault (Cloudflare deploy + framework-supabase) ──"
     local SECRETS=(
-        mbs-paycraft-encryption-key
-        mbs-paycraft-resend-api-key
-        mbs-paycraft-vercel-token
-        mbs-paycraft-vercel-org-id
-        mbs-paycraft-vercel-project-id
+        paycraft-encryption-key
+        mbs-cloudflare-account-id
+        mbs-cloudflare-pages-api-token
         framework-supabase-personal-access-token
     )
     local total=0 present=0 missing=()
@@ -617,12 +631,12 @@ emit_status() {
 
     echo "─── branches ───────────────────────────────────────"
     cd "$PAYCRAFT_SRC"
-    git fetch -q origin development main 2>/dev/null || true
+    git fetch -q origin dev main 2>/dev/null || true
     local dev_sha main_sha ahead
-    dev_sha=$(git rev-parse --short origin/development 2>/dev/null || echo "?")
+    dev_sha=$(git rev-parse --short origin/dev 2>/dev/null || echo "?")
     main_sha=$(git rev-parse --short origin/main 2>/dev/null || echo "?")
-    ahead=$(git rev-list --count origin/main..origin/development 2>/dev/null || echo "?")
-    printf "development:   %s\n" "$dev_sha"
+    ahead=$(git rev-list --count origin/main..origin/dev 2>/dev/null || echo "?")
+    printf "dev:   %s\n" "$dev_sha"
     printf "main:          %s\n" "$main_sha"
     printf "ahead:         %s commits (dev ahead of main)\n" "$ahead"
     if [[ "$dev_sha" = "$main_sha" ]]; then
@@ -638,7 +652,7 @@ emit_status() {
         case "$n" in
             1) name="PRE-FLIGHT" ;; 2) name="SECRETS SYNC" ;;
             3) name="MIGRATIONS" ;; 3.5) name="FUNCTIONS DEPLOY" ;;
-            4) name="PROMOTE" ;; 5) name="WAIT VERCEL" ;; 6) name="SMOKE" ;;
+            4) name="PROMOTE" ;; 5) name="DEPLOY CLOUDFLARE" ;; 6) name="SMOKE" ;;
         esac
         local marker="$STATE_DIR/phase-$n.done"
         if [[ -f "$marker" ]]; then
@@ -819,7 +833,7 @@ run_phase 2   "SECRETS SYNC"     "phase_2_secrets_sync"  || exit 1
 run_phase 3   "MIGRATIONS"       "phase_3_migrations"    || exit 1
 run_phase 3.5 "FUNCTIONS DEPLOY" "phase_3_5_functions"   || exit 1
 run_phase 4   "PROMOTE"          "phase_4_promote"       || exit 1
-run_phase 5   "WAIT VERCEL"      "phase_5_wait_vercel"   || exit 1
+run_phase 5   "DEPLOY CLOUDFLARE" "phase_5_deploy_cloudflare" || exit 1
 run_phase 6   "SMOKE"            "phase_6_smoke"         || exit 1
 
 banner "PayCraft Deploy — done in $(($(date -u +%s) - START_TS))s"
@@ -828,3 +842,5 @@ echo "  Live: $PROD_URL"
 printf '{"ts":"%s","env":"production","status":"success","duration_s":%d,"apply":%s,"main_sha":"%s"}\n' \
     "$(date -u +%FT%TZ)" "$(($(date -u +%s) - START_TS))" "$APPLY" \
     "$(git -C $PAYCRAFT_SRC rev-parse --short origin/main 2>/dev/null)" >> "$LEDGER"
+
+# cloudflare-deploy wired via /paycraft-deploy phase 5 (2026-08-23)

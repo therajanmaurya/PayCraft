@@ -326,17 +326,25 @@ function ProviderCard({
 
 function ResultLine({ name, report }: { name: string; report: SyncReport }) {
   if (report.status === "skipped") {
+    // A skip always states WHY (not connected / no pricing / type unsupported).
     return (
-      <div className="flex items-center gap-1.5 text-[11px] text-ink-500">
-        <span className="w-1.5 h-1.5 rounded-full bg-ink-300" />
-        {name} skipped (not connected)
+      <div className="flex items-start gap-1.5 text-[11px] text-ink-500">
+        <span className="w-1.5 h-1.5 rounded-full bg-ink-300 flex-shrink-0 mt-1" />
+        <div>
+          {name} skipped
+          <div className="text-[10px] text-ink-400 mt-0.5">{report.message ?? "not connected"}</div>
+        </div>
       </div>
     )
   }
   if (report.status === "ok") {
     return (
-      <div className="flex items-center gap-1.5 text-[11px] text-emerald-700">
-        <Check className="w-3 h-3" /> {name} synced
+      <div className="flex items-start gap-1.5 text-[11px] text-emerald-700">
+        <Check className="w-3 h-3 flex-shrink-0 mt-0.5" />
+        <div>
+          {name} synced
+          {report.message && <div className="text-[10px] text-amber-600 mt-0.5">{report.message}</div>}
+        </div>
       </div>
     )
   }

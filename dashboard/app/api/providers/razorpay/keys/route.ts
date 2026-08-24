@@ -1,5 +1,7 @@
+export const runtime = "edge"
+
 import { NextRequest, NextResponse } from "next/server"
-import Razorpay from "razorpay"
+import { razorpayRest } from "@/lib/razorpay-rest"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
 
@@ -38,8 +40,8 @@ async function validateKeyPair(
     return `${mode}_key_id must start with ${prefix}`
   }
   try {
-    const client = new Razorpay({ key_id: keyId, key_secret: keySecret })
-    await (client as any).payments.all({ count: 1 })
+    const client = razorpayRest(keyId, keySecret)
+    await client.payments.all({ count: 1 })
     return null
   } catch (e: any) {
     return `${mode} key invalid: ${e.message ?? "auth failed"}`

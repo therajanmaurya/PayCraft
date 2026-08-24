@@ -71,7 +71,15 @@ export async function syncProductToStripe(
   stripeInterval: StripeInterval | null,
   prices: PriceInput[],
   existing: SyncProductOptions = {},
+  /**
+   * Free-trial length in days (subscription's trial_enabled + trial_duration_days).
+   * When > 0 on a subscription, the payment link grants a real Stripe free trial via
+   * `subscription_data.trial_period_days` — so the checkout the paywall opens actually
+   * honours the advertised trial (Play/Store parity). 0/undefined → no trial.
+   */
+  trialDays?: number,
 ): Promise<SyncResult> {
+  const wantsTrial = productType === "subscription" && typeof trialDays === "number" && trialDays > 0
   const stripe = await getConnectedStripeClient(tenantId)
 
   // Idempotency keys are tenant+product scoped. When we self-heal a stale
@@ -211,22 +219,29 @@ export async function syncProductToStripe(
   for (const [currency, priceId] of Object.entries(pricesByCurrency)) {
     if (paymentLinksByCurrency[currency]) continue
     try {
-      const pl = await stripe.paymentLinks.create(
-        {
-          line_items: [{ price: priceId, quantity: 1 }],
-          // Enable promotion codes so PayCraft's SDK can append
-          // `?prefilled_promo_code=…` at checkout time. Without this flag,
-          // Stripe Payment Links ignore the parameter — the customer would
-          // never see the discount applied. See SDK PayCraft.appendCouponParam.
-          allow_promotion_codes: true,
-          metadata: {
-            paycraft_tenant_id: tenantId,
-            paycraft_product_id: productId,
-            currency,
-          },
+      const linkParams: Stripe.PaymentLinkCreateParams = {
+        line_items: [{ price: priceId, quantity: 1 }],
+        // Enable promotion codes so PayCraft's SDK can append
+        // `?prefilled_promo_code=…` at checkout time. Without this flag,
+        // Stripe Payment Links ignore the parameter — the customer would
+        // never see the discount applied. See SDK PayCraft.appendCouponParam.
+        allow_promotion_codes: true,
+        metadata: {
+          paycraft_tenant_id: tenantId,
+          paycraft_product_id: productId,
+          currency,
         },
-        { idempotencyKey: idem(`paymentlink-${currency}`) },
-      )
+      }
+      // Real Stripe free trial on the subscription the link creates.
+      if (wantsTrial) {
+        linkParams.subscription_data = { trial_period_days: trialDays as number }
+      }
+      const pl = await stripe.paymentLinks.create(linkParams, {
+        // Trial length is part of the idempotency key so enabling/changing a
+        // trial produces a NEW link (Stripe links are immutable) instead of
+        // the 24h idempotency cache returning the old no-trial link.
+        idempotencyKey: idem(`paymentlink-${currency}${wantsTrial ? `-t${trialDays}` : ""}`),
+      })
       paymentLinksByCurrency[currency] = pl.url
     } catch (e: any) {
       console.error(`[stripe-product-sync] paymentLinks.create(${currency}) failed:`, e.message)

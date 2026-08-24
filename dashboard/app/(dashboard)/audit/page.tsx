@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { Activity, Download, Info, ChevronRight, Search } from "lucide-react"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"

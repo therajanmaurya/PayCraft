@@ -1,5 +1,6 @@
+export const runtime = "edge"
+
 import { NextResponse } from "next/server"
-import Razorpay from "razorpay"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
 

@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { Check, CheckCircle2 } from "lucide-react"
 import { createClient } from "@/lib/supabase-server"

@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
 import type { WebhookLog } from "@/lib/types"

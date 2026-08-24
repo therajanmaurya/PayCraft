@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
@@ -63,34 +65,9 @@ async function providerConnections(
   }
 }
 
-/**
- * Products still missing their native-store product id. There's no
- * tenant_products_unsynced branch for the stores (that RPC only knows
- * stripe/razorpay), so we probe tenant_products directly. Native stores only
- * apply to subscription products (the sync helpers self-skip non-subscriptions),
- * so we filter to type = 'subscription' + active here to mirror that contract
- * and keep the preview counts honest. Row shape matches the
- * tenant_products_unsynced RPC (id / sku / display_name) so downstream
- * consumers can treat every provider's items[] uniformly.
- */
-async function storeUnsyncedRows(
-  supabase: ReturnType<typeof createClient>,
-  tenantId: string,
-  provider: "google_play" | "app_store",
-): Promise<any[]> {
-  const column =
-    provider === "google_play" ? "play_product_id" : "app_store_product_id"
-  const { data } = await supabase
-    .from("tenant_products")
-    .select("id, sku, display_name, type, interval, base_price_cents, base_currency")
-    .eq("tenant_id", tenantId)
-    .eq("active", true)
-    .eq("type", "subscription")
-    .is(column, null)
-    .order("display_order")
-    .order("created_at")
-  return data ?? []
-}
+// Native-store unsynced probing now flows through tenant_products_needs_sync
+// (migration 078) — which covers null store-id AND non-terminal/failed/draft sync
+// state — so the old per-store null-id probe (storeUnsyncedRows) was removed.
 
 export async function GET() {
   const { tenant } = await requireTenant()
@@ -100,31 +77,24 @@ export async function GET() {
 
   // Only probe unsynced products for connected providers — we don't want to
   // surface "4 not synced to Razorpay" when Razorpay isn't even configured.
+  // tenant_products_needs_sync (migration 078) is a superset of the old null-id
+  // heuristic: it also returns products whose recorded sync_status is non-terminal
+  // (an interrupted "save for later" run) OR whose per-provider state is failed/
+  // draft (e.g. base plan synced but the FREE_TRIAL offer failed) — which the
+  // null-id check could never see.
+  const needsSync = (provider: string) =>
+    supabase.rpc("tenant_products_needs_sync", { p_tenant_id: tenant.id, p_provider: provider })
   const [stripeRowsResp, razorpayRowsResp, playRowsResp, appStoreRowsResp] =
     await Promise.all([
-      connected.stripe
-        ? supabase.rpc("tenant_products_unsynced", {
-            p_tenant_id: tenant.id,
-            p_provider: "stripe",
-          })
-        : Promise.resolve({ data: [] }),
-      connected.razorpay
-        ? supabase.rpc("tenant_products_unsynced", {
-            p_tenant_id: tenant.id,
-            p_provider: "razorpay",
-          })
-        : Promise.resolve({ data: [] }),
-      connected.google_play
-        ? storeUnsyncedRows(supabase, tenant.id, "google_play")
-        : Promise.resolve([] as any[]),
-      connected.app_store
-        ? storeUnsyncedRows(supabase, tenant.id, "app_store")
-        : Promise.resolve([] as any[]),
+      connected.stripe ? needsSync("stripe") : Promise.resolve({ data: [] }),
+      connected.razorpay ? needsSync("razorpay") : Promise.resolve({ data: [] }),
+      connected.google_play ? needsSync("google_play") : Promise.resolve({ data: [] }),
+      connected.app_store ? needsSync("app_store") : Promise.resolve({ data: [] }),
     ])
   const stripeRows = stripeRowsResp.data ?? []
   const razorpayRows = razorpayRowsResp.data ?? []
-  const playRows = playRowsResp ?? []
-  const appStoreRows = appStoreRowsResp ?? []
+  const playRows = playRowsResp.data ?? []
+  const appStoreRows = appStoreRowsResp.data ?? []
 
   // Distinct-product count — the same row showing up in several lists shouldn't
   // be counted twice (banner shows "N products need sync", not "N sync ops").
@@ -164,7 +134,7 @@ async function loadFullProductBodies(
   const { data: products = [] } = await supabase
     .from("tenant_products")
     .select(
-      "id, sku, type, display_name, interval, base_price_cents, base_currency, stripe_product_id, stripe_price_id_by_currency, razorpay_plan_id_by_currency, play_product_id, app_store_product_id",
+      "id, sku, type, display_name, interval, base_price_cents, base_currency, trial_enabled, trial_duration_days, stripe_product_id, stripe_price_id_by_currency, razorpay_plan_id_by_currency, play_product_id, app_store_product_id",
     )
     .eq("tenant_id", tenantId)
     .in("id", ids)
@@ -197,31 +167,24 @@ export async function POST() {
 
   const connected = await providerConnections(supabase, tenant.id)
 
+  // tenant_products_needs_sync (migration 078) is a superset of the old null-id
+  // heuristic: it also returns products whose recorded sync_status is non-terminal
+  // (an interrupted "save for later" run) OR whose per-provider state is failed/
+  // draft (e.g. base plan synced but the FREE_TRIAL offer failed) — which the
+  // null-id check could never see.
+  const needsSync = (provider: string) =>
+    supabase.rpc("tenant_products_needs_sync", { p_tenant_id: tenant.id, p_provider: provider })
   const [stripeRowsResp, razorpayRowsResp, playRowsResp, appStoreRowsResp] =
     await Promise.all([
-      connected.stripe
-        ? supabase.rpc("tenant_products_unsynced", {
-            p_tenant_id: tenant.id,
-            p_provider: "stripe",
-          })
-        : Promise.resolve({ data: [] }),
-      connected.razorpay
-        ? supabase.rpc("tenant_products_unsynced", {
-            p_tenant_id: tenant.id,
-            p_provider: "razorpay",
-          })
-        : Promise.resolve({ data: [] }),
-      connected.google_play
-        ? storeUnsyncedRows(supabase, tenant.id, "google_play")
-        : Promise.resolve([] as any[]),
-      connected.app_store
-        ? storeUnsyncedRows(supabase, tenant.id, "app_store")
-        : Promise.resolve([] as any[]),
+      connected.stripe ? needsSync("stripe") : Promise.resolve({ data: [] }),
+      connected.razorpay ? needsSync("razorpay") : Promise.resolve({ data: [] }),
+      connected.google_play ? needsSync("google_play") : Promise.resolve({ data: [] }),
+      connected.app_store ? needsSync("app_store") : Promise.resolve({ data: [] }),
     ])
   const stripeRows = stripeRowsResp.data ?? []
   const razorpayRows = razorpayRowsResp.data ?? []
-  const playRows = playRowsResp ?? []
-  const appStoreRows = appStoreRowsResp ?? []
+  const playRows = playRowsResp.data ?? []
+  const appStoreRows = appStoreRowsResp.data ?? []
 
   const allIds = [
     ...((stripeRows ?? []) as any[]).map((r) => r.id),

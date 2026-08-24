@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { NextResponse } from "next/server"
 import Stripe from "stripe"
 import { createClient } from "@/lib/supabase-server"
@@ -57,7 +59,7 @@ export async function POST() {
       continue
     }
     try {
-      const stripe = new Stripe(secret, { apiVersion: "2026-05-27.dahlia" })
+      const stripe = new Stripe(secret, { apiVersion: "2026-05-27.dahlia" as Stripe.LatestApiVersion })
       const list = await stripe.webhookEndpoints.list({ limit: 100 })
       const match = list.data.find((e) => e.url === expectedUrl)
       if (!match) {

@@ -1,4 +1,4 @@
-import Razorpay from "razorpay"
+import type { RazorpayRestClient } from "./razorpay-rest"
 import { createClient } from "./supabase-server"
 import { getConnectedRazorpayClient } from "./razorpay-client"
 
@@ -26,7 +26,7 @@ export async function syncCouponToRazorpay(opts: {
     return { razorpayOfferId: opts.existingRazorpayOfferId }
   }
 
-  let client: Razorpay
+  let client: RazorpayRestClient
   try {
     client = await getConnectedRazorpayClient(opts.tenantId, "live")
   } catch {
@@ -72,7 +72,9 @@ export async function syncCouponToRazorpay(opts: {
     const resp = await (client as any).offers.create(payload)
     offerId = resp.id
   } catch (e: any) {
-    console.error("[razorpay-coupon-sync] offers.create failed:", e?.error?.description ?? e.message)
+    // Razorpay Offers are dashboard-managed (the API returns 405 for create), so
+    // a coupon can't be pushed as a Razorpay offer programmatically — skip, not fail.
+    console.warn("[razorpay-coupon-sync] offers.create unsupported:", e?.message ?? e)
     return null
   }
 

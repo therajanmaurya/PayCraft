@@ -19,6 +19,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -174,6 +175,77 @@ class ProductListTest {
         assertEquals(0, badges.size, "no trial → no trial badge")
     }
 
+    // ─── Play Subscriptions policy: trial-terms disclosure ────────────────
+    // The paywall must clearly state the trial length, the post-trial price +
+    // cadence (on the offer itself), and how to cancel. Missing post-trial price
+    // is what got reels-downloader rejected (Subscriptions policy, version 33).
+
+    @Test
+    fun trial_eligible_card_shows_post_trial_price_terms() = runComposeUiTest {
+        setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalPayCraftConfig provides config()) {
+                    ProductList(
+                        products = sampleProducts,
+                        onPurchase = {},
+                        recommendedSku = "annual",
+                    )
+                }
+            }
+        }
+        // trialProduct attaches to prod_monthly → the monthly card must carry a
+        // per-plan trial-terms line naming the post-trial price + cadence.
+        val terms = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_TRIAL_TERMS, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertEquals(
+            expected = 1,
+            actual = terms.size,
+            message = "trial-eligible plan must disclose post-trial price + cadence on the offer",
+        )
+    }
+
+    @Test
+    fun trial_terms_line_absent_when_no_trial_product() = runComposeUiTest {
+        setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalPayCraftConfig provides config()) {
+                    ProductList(
+                        products = listOf(monthlyProduct, annualProduct, lifetimeProduct),
+                        onPurchase = {},
+                        recommendedSku = "annual",
+                    )
+                }
+            }
+        }
+        val terms = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_TRIAL_TERMS, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertEquals(0, terms.size, "no trial → no per-plan trial-terms line")
+    }
+
+    @Test
+    fun trial_disclosure_states_cancellation() = runComposeUiTest {
+        setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalPayCraftConfig provides config()) {
+                    ProductList(
+                        products = sampleProducts,
+                        onPurchase = {},
+                        recommendedSku = "annual",
+                    )
+                }
+            }
+        }
+        // The disclosure block must tell users the trial auto-converts AND how to
+        // avoid the charge (cancel) — the third required policy term.
+        onNodeWithTag(PayCraftTestTags.TRIAL_BADGE).assertExists()
+        val cancelCopy = onAllNodesWithText("Cancel", substring = true, ignoreCase = true)
+            .fetchSemanticsNodes()
+        assertTrue(
+            cancelCopy.isNotEmpty(),
+            "trial disclosure must state how to cancel before being charged",
+        )
+    }
+
     @Test
     fun product_list_cta_dispatches_recommended_sku() = runComposeUiTest {
         var dispatched: String? = null
@@ -303,6 +375,72 @@ class ProductListTest {
         val recommended = onAllNodesWithTag(PayCraftTestTags.PRODUCT_LIST_RECOMMENDED)
             .fetchSemanticsNodes()
         assertEquals(1, recommended.size, "popularPlanSku=annual → exactly one recommended card")
+    }
+
+    // ─── Trial-copy fail-safe (Play: no unresolved/blank placeholders) ────
+    // Google Play's single most common trial-offer rejection is a paywall that
+    // renders a literal/broken placeholder or omits the post-trial price. A
+    // dashboard-configured template must never produce either — resolveTrialCopy
+    // falls back to the guaranteed-correct SDK default.
+
+    @Test
+    fun trial_copy_honors_valid_tenant_template() {
+        val out = resolveTrialCopy(
+            template = "Trial: {days} days, renews at {price}",
+            fallback = "{days}-day free trial, then {price}",
+            days = 7,
+            price = "$9.99 / month",
+            requirePrice = true,
+        )
+        assertEquals("Trial: 7 days, renews at $9.99 / month", out)
+    }
+
+    @Test
+    fun trial_copy_falls_back_when_tenant_template_drops_price_token() {
+        val out = resolveTrialCopy(
+            template = "{days}-day free trial", // missing {price} → post-trial cost would vanish
+            fallback = "{days}-day free trial, then {price}",
+            days = 14,
+            price = "₹299 / month",
+            requirePrice = true,
+        )
+        assertEquals("14-day free trial, then ₹299 / month", out)
+        assertTrue(out.contains("₹299 / month"), "post-trial price must survive the fallback")
+    }
+
+    @Test
+    fun trial_copy_falls_back_when_tenant_template_has_broken_token() {
+        val out = resolveTrialCopy(
+            template = "{days}-day trial, then {prices}", // typo'd token
+            fallback = "{days}-day free trial, then {price}",
+            days = 7,
+            price = "$9.99 / month",
+            requirePrice = true,
+        )
+        assertTrue(!out.contains("{"), "no literal placeholder may reach the UI (Play rejection)")
+        assertTrue(out.contains("$9.99 / month"), "fallback restores the post-trial price")
+    }
+
+    @Test
+    fun trial_copy_body_allows_no_token_and_guards_typos() {
+        // Body has no required token; a plain tenant string is honored verbatim.
+        val plain = resolveTrialCopy(
+            template = "Cancel anytime in Settings before the trial ends.",
+            fallback = "default body",
+            days = 7,
+            price = null,
+            requirePrice = false,
+        )
+        assertEquals("Cancel anytime in Settings before the trial ends.", plain)
+        // …but a stray unresolved token falls back to the SDK default.
+        val broken = resolveTrialCopy(
+            template = "Cancel before {da ys} — oops {bonus}",
+            fallback = "default body",
+            days = 7,
+            price = null,
+            requirePrice = false,
+        )
+        assertEquals("default body", broken)
     }
 
     // ─── buildProductRows unit sanity ─────────────────────────────────────

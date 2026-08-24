@@ -113,6 +113,19 @@ class SampleApplication : Application() {
                 displayOrder = 2,
                 playProductId = "paycraft_yearly",
             ),
+            // 14-day free trial attached to the monthly plan — showcases the
+            // Play Subscriptions-policy trial disclosure (post-trial price + cadence
+            // on the offer, auto-renew + how-to-cancel copy). Mirrors the reels-downloader
+            // offer that must clearly state trial terms.
+            ProductDto(
+                id = "monthly_trial",
+                sku = "monthly_trial",
+                type = "trial",
+                displayName = "14-day Free Trial",
+                trialDurationDays = 14,
+                attachesToProductId = "monthly",
+                displayOrder = 99,
+            ),
         ),
         providers = listOf(
             ProviderDto(
@@ -125,8 +138,9 @@ class SampleApplication : Application() {
             ),
         ),
         paywall = PaywallDto(
-            template = "minimal",
+            template = "branded-stack",
             branding = "attribution",
+            popularPlanSku = "quarterly",
             supportEmail = "support@yourdomain.com",
         ),
     )

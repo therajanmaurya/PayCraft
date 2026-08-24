@@ -1,12 +1,12 @@
 # PR Check Workflow — fast gate on pull requests
 # Runs quality + JVM tests only (iOS/Linux skipped for speed).
-# Full build (all targets) runs on push to development/main via gradle.yml.
+# Full build (all targets) runs on push to dev/main via gradle.yml.
 
 name: PR Check
 
 on:
   pull_request:
-    branches: [ "development", "main" ]
+    branches: [ "dev", "main" ]
 
 permissions:
   contents: read

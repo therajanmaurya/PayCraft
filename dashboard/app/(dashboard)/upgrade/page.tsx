@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { requireTenant } from "@/lib/tenant"
 import { UpgradeCards } from "./upgrade-cards"
 

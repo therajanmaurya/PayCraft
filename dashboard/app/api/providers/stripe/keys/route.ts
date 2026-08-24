@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
 import { createClient } from "@/lib/supabase-server"
@@ -39,7 +41,7 @@ async function validateStripeSecret(
     return `${mode}_secret_key must start with ${prefix}`
   }
   try {
-    const client = new Stripe(secret, { apiVersion: "2026-05-27.dahlia" })
+    const client = new Stripe(secret, { apiVersion: "2026-05-27.dahlia" as Stripe.LatestApiVersion })
     await client.balance.retrieve()
     return null
   } catch (e: any) {

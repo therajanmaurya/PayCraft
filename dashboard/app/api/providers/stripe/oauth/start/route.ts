@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import { NextResponse } from "next/server"
 import { requireTenant } from "@/lib/tenant"
 import { makeState } from "@/lib/stripe-oauth-state"
@@ -26,7 +28,7 @@ export async function GET() {
     )
   }
   const { tenant } = await requireTenant()
-  const state = makeState(tenant.id)
+  const state = await makeState(tenant.id)
 
   const url = new URL("https://connect.stripe.com/oauth/authorize")
   url.searchParams.set("response_type", "code")

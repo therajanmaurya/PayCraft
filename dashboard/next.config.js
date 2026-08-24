@@ -39,10 +39,29 @@ const nextConfig = {
     return [
       { source: '/docs', destination: '/docs/quickstart-cloud', permanent: false },
       { source: '/self-host', destination: '/docs/quickstart-cloud', permanent: false },
+      // Folded in from the retired dashboard/vercel.json on the Cloudflare
+      // migration (2026-08-23) — host-agnostic now that we run on Workers.
+      { source: '/app', destination: '/dashboard', permanent: false },
     ]
   },
   async headers() {
     return [
+      // Security headers — previously in dashboard/vercel.json (Vercel-specific).
+      // Moved into next.config so they apply on Cloudflare Workers too.
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+      {
+        // API responses are never cached (auth/tenant-scoped data).
+        source: '/api/(.*)',
+        headers: [{ key: 'Cache-Control', value: 'no-store, max-age=0' }],
+      },
       {
         // Apply CORS to all SDK-facing /api routes EXCEPT webhooks (which
         // never come from browsers, and a permissive CORS header on them

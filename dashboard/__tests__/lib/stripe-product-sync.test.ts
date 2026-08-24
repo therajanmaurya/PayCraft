@@ -365,3 +365,53 @@ describe("syncProductToStripe — stale ID self-heal", () => {
     expect(stripeProducts.update).toHaveBeenCalledWith("prod_OLD", { name: NAME })
   })
 })
+
+describe("syncProductToStripe — free trial", () => {
+  it("attaches trial_period_days to the payment link for a subscription with a trial", async () => {
+    await syncProductToStripe(
+      TENANT,
+      PRODUCT,
+      NAME,
+      "subscription",
+      toStripeInterval("month"),
+      [{ currency: "USD", amountCents: 999 }],
+      {},
+      14,
+    )
+    const [linkParams, linkOpts] = stripePaymentLinks.create.mock.calls[0]
+    expect(linkParams.subscription_data).toEqual({ trial_period_days: 14 })
+    // Trial length is part of the idempotency key so a trial change forces a new link.
+    expect(linkOpts.idempotencyKey).toBe(`paycraft:${TENANT}:${PRODUCT}:paymentlink-USD-t14`)
+  })
+
+  it("does NOT attach a trial when trialDays is 0", async () => {
+    await syncProductToStripe(
+      TENANT,
+      PRODUCT,
+      NAME,
+      "subscription",
+      toStripeInterval("month"),
+      [{ currency: "USD", amountCents: 999 }],
+      {},
+      0,
+    )
+    const [linkParams, linkOpts] = stripePaymentLinks.create.mock.calls[0]
+    expect(linkParams.subscription_data).toBeUndefined()
+    expect(linkOpts.idempotencyKey).toBe(`paycraft:${TENANT}:${PRODUCT}:paymentlink-USD`)
+  })
+
+  it("does NOT attach a trial to a one-time (lifetime) product even if trialDays is set", async () => {
+    await syncProductToStripe(
+      TENANT,
+      PRODUCT,
+      NAME,
+      "lifetime",
+      null,
+      [{ currency: "USD", amountCents: 4999 }],
+      {},
+      14,
+    )
+    const [linkParams] = stripePaymentLinks.create.mock.calls[0]
+    expect(linkParams.subscription_data).toBeUndefined()
+  })
+})

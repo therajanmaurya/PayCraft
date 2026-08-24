@@ -1,3 +1,5 @@
+export const runtime = "edge"
+
 import Link from "next/link"
 import { ArrowRight, Zap, CheckCircle2, TrendingUp, Plus } from "lucide-react"
 import { ButtonLink } from "@/components/ui/button"

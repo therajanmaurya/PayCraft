@@ -23,7 +23,11 @@ import { createClient as createServiceClient } from "@supabase/supabase-js"
  *      auto-creation in the user's Stripe account.
  */
 
-const STRIPE_API_VERSION = "2026-05-27.dahlia" as const
+// Cast to the SDK's apiVersion type so a `stripe` minor bump (which pins a NEWER
+// LatestApiVersion literal) doesn't break `next build`'s type-check. We keep
+// pinning THIS api version at runtime deliberately (stable payloads); Stripe
+// accepts an explicit older apiVersion regardless of the SDK build.
+const STRIPE_API_VERSION = "2026-05-27.dahlia" as Stripe.LatestApiVersion
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!
 

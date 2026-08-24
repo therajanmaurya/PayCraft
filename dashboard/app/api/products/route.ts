@@ -1,13 +1,9 @@
+export const runtime = "edge"
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase-server"
 import { requireTenant } from "@/lib/tenant"
-import {
-  stripeSyncProduct,
-  razorpaySyncProduct,
-  cashfreeSyncProduct,
-  googlePlaySyncProduct,
-  appStoreSyncProduct,
-} from "@/lib/stripe-route-helper"
+import { runProductSync } from "@/lib/stripe-route-helper"
 
 export async function POST(req: NextRequest) {
   const { tenant, userId } = await requireTenant()
@@ -42,16 +38,12 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Best-effort multi-provider sync (all run concurrently; failures are logged only).
-  // Web PSPs (Stripe/Razorpay/Cashfree) + native stores (Google Play / App Store)
-  // — each self-skips when the tenant hasn't connected that provider.
-  void Promise.all([
-    stripeSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    razorpaySyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    cashfreeSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    googlePlaySyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-    appStoreSyncProduct(supabase, { tenantId: tenant.id, productId: id, body }),
-  ])
+  // Immediate, durable multi-provider sync. runProductSync marks the product
+  // `syncing` up front (so a tab-close mid-run stays retryable — "save for later"),
+  // fans out to every provider (base product + free-trial offer), and records the
+  // per-provider outcome so the dashboard can show success/failure and offer a
+  // retry with the real server reason. Never throws (all provider errors captured).
+  const summary = await runProductSync(supabase, { tenantId: tenant.id, productId: id, body })
 
-  return NextResponse.json({ id })
+  return NextResponse.json({ id, sync_status: summary.status, providers: summary.providers })
 }
