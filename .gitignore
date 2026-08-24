@@ -125,3 +125,4 @@ supabase/migrations/*
 
 # Wrangler CLI cache (Cloudflare Workers)
 .wrangler/
+!supabase/migrations/082_rls_security_hardening.sql
