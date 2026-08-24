@@ -68,6 +68,10 @@ export async function POST(req: NextRequest) {
   const bundleId = typeof raw.bundle_id === "string" ? raw.bundle_id.trim() || null : packageName
   const platforms = Array.isArray(raw.platforms) ? (raw.platforms as unknown[]).filter((p) => typeof p === "string") as string[] : []
   const inheritFrom = typeof raw.inherit_providers_from === "string" ? raw.inherit_providers_from : null
+  // Optional subset of provider names to inherit (checkboxes). null = inherit all.
+  const inheritOnly = Array.isArray(raw.inherit_providers)
+    ? ((raw.inherit_providers as unknown[]).filter((p) => typeof p === "string") as string[])
+    : null
   const seedProducts = raw.seed_products !== false
   const doSync = raw.sync !== false
 
@@ -118,6 +122,7 @@ export async function POST(req: NextRequest) {
     const src = (await admin.from("tenant_providers").select("*").eq("tenant_id", inheritFrom)).data ?? []
     for (const p of src as Record<string, unknown>[]) {
       const provider = p.provider as string
+      if (inheritOnly && !inheritOnly.includes(provider)) continue // only the checked providers
       const row: Record<string, unknown> = {
         tenant_id: tenantId,
         provider,

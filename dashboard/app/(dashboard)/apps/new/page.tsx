@@ -27,7 +27,15 @@ export default function NewAppPage() {
   // when the account already has another app — one provider secret serves many apps.
   const [providerMode, setProviderMode] = useState<"reuse" | "later">("later")
   const [reuseFrom, setReuseFrom] = useState<string>("")
+  // Which of the source app's providers to copy — all checked by default.
+  const [selectedProviders, setSelectedProviders] = useState<Set<string>>(new Set())
   const router = useRouter()
+
+  // Whenever the source app changes, select ALL of its providers by default.
+  useEffect(() => {
+    const src = apps.find((a) => a.id === reuseFrom)
+    setSelectedProviders(new Set((src?.providers ?? []).map((p) => p.provider)))
+  }, [reuseFrom, apps])
 
   useEffect(() => {
     void (async () => {
@@ -63,6 +71,7 @@ export default function NewAppPage() {
           body: JSON.stringify({
             app_name: name.trim(),
             inherit_providers_from: reuseFrom,
+            inherit_providers: Array.from(selectedProviders),
             seed_products: true,
             sync: false,
           }),
@@ -183,15 +192,34 @@ export default function NewAppPage() {
                       {(() => {
                         const provs = apps.find((a) => a.id === reuseFrom)?.providers ?? []
                         return provs.length > 0 ? (
-                          <div className="mt-2 space-y-1.5 rounded-lg border border-ink-100 bg-white p-2.5">
+                          <div className="mt-2 rounded-lg border border-ink-100 bg-white p-1">
                             {provs.map((p) => (
-                              <div key={p.provider} className="flex items-center gap-2 text-xs">
-                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                                <span className="font-medium text-ink-700 shrink-0">{PROVIDER_LABELS[p.provider] ?? p.provider}</span>
+                              <label
+                                key={p.provider}
+                                className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs cursor-pointer hover:bg-ink-50"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5 shrink-0 accent-brand-600"
+                                  checked={selectedProviders.has(p.provider)}
+                                  onChange={(e) =>
+                                    setSelectedProviders((prev) => {
+                                      const next = new Set(prev)
+                                      if (e.target.checked) next.add(p.provider)
+                                      else next.delete(p.provider)
+                                      return next
+                                    })
+                                  }
+                                />
+                                <span className="w-24 shrink-0 font-medium text-ink-800">
+                                  {PROVIDER_LABELS[p.provider] ?? p.provider}
+                                </span>
                                 {p.account && (
-                                  <span className="truncate font-mono text-[11px] text-ink-400">{p.account}</span>
+                                  <span className="truncate font-mono text-[11px] text-ink-400" title={p.account}>
+                                    {p.account}
+                                  </span>
                                 )}
-                              </div>
+                              </label>
                             ))}
                           </div>
                         ) : (
