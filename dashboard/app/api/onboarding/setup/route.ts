@@ -138,6 +138,10 @@ export async function POST(req: NextRequest) {
         row.live_webhook_secret_enc = p.live_webhook_secret_enc
         row.test_key_id = p.test_key_id
         row.live_key_id = p.live_key_id
+        // store_config holds only the non-secret account_label for web PSPs (no
+        // app-specific ids) — carry it so the adopted app references the same
+        // account in the dashboard / reuse picker.
+        if (p.store_config) row.store_config = p.store_config
       } else if (NATIVE.has(provider)) {
         // Same store service-account/.p8 credential, but the store_config app ids
         // MUST be THIS app's (package_name / bundle_id).
