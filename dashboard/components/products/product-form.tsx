@@ -139,17 +139,47 @@ export function ProductForm({
             </label>
           </Field>
           {(p.trial_enabled ?? true) && (
-            <Field label="Trial duration (days)">
-              <input
-                type="number"
-                min={1}
-                max={365}
-                value={p.trial_duration_days ?? 7}
-                onChange={(e) =>
-                  setP({ ...p, trial_duration_days: parseInt(e.target.value || "7") })
-                }
-                className="input w-24"
-              />
+            <Field label="Trial duration">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  {[3, 7, 14, 30].map((days) => {
+                    const active = (p.trial_duration_days ?? 7) === days
+                    return (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => setP({ ...p, trial_duration_days: days })}
+                        className={
+                          "rounded-md border px-3 py-1 text-sm transition-colors " +
+                          (active
+                            ? "border-brand-500 bg-brand-50 text-brand-700 font-medium"
+                            : "border-ink-200 text-ink-600 hover:border-ink-300")
+                        }
+                      >
+                        {days}d
+                      </button>
+                    )
+                  })}
+                  <div className="flex items-center gap-1 text-sm">
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={p.trial_duration_days ?? 7}
+                      onChange={(e) =>
+                        setP({ ...p, trial_duration_days: parseInt(e.target.value || "7") })
+                      }
+                      className="input w-20"
+                    />
+                    <span className="text-ink-500">days</span>
+                  </div>
+                </div>
+                <p className="text-xs text-ink-500">
+                  Applies across every connected provider — Google Play &amp; App Store
+                  free-trial offers, Stripe trial period, Razorpay — for new subscribers.
+                  Changes reflect in the app in realtime.
+                </p>
+              </div>
             </Field>
           )}
         </>
