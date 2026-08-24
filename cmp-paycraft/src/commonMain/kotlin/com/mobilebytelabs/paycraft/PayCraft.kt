@@ -10,8 +10,6 @@ import com.mobilebytelabs.paycraft.config.ProviderDto
 import com.mobilebytelabs.paycraft.config.SuiteConfig
 import com.mobilebytelabs.paycraft.core.AdFreeEntitlement
 import com.mobilebytelabs.paycraft.core.BillingManager
-import com.mobilebytelabs.paycraft.network.PayCraftRealtime
-import com.mobilebytelabs.paycraft.persistence.PayCraftStore
 import com.mobilebytelabs.paycraft.core.EntitlementSnapshot
 import com.mobilebytelabs.paycraft.core.MonetizationMode
 import com.mobilebytelabs.paycraft.core.MonetizationModeResolver
@@ -22,6 +20,8 @@ import com.mobilebytelabs.paycraft.debug.PayCraftLogger
 import com.mobilebytelabs.paycraft.model.BillingBenefit
 import com.mobilebytelabs.paycraft.model.BillingPlan
 import com.mobilebytelabs.paycraft.network.CouponClient
+import com.mobilebytelabs.paycraft.network.PayCraftRealtime
+import com.mobilebytelabs.paycraft.persistence.PayCraftStore
 import com.mobilebytelabs.paycraft.platform.DeviceFingerprint
 import com.mobilebytelabs.paycraft.platform.PlatformInfo
 import com.mobilebytelabs.paycraft.platform.currentTimeMillis
