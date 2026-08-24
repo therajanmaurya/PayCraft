@@ -7,7 +7,15 @@ import { ArrowLeft, Smartphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 
-type AppRow = { id: string; name: string }
+type AppRow = { id: string; name: string; providers?: string[]; owner_email?: string }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  stripe: "Stripe",
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  google_play: "Google Play",
+  app_store: "App Store",
+}
 
 export default function NewAppPage() {
   const [name, setName] = useState("")
@@ -132,6 +140,11 @@ export default function NewAppPage() {
             <label className="text-[11px] font-bold uppercase tracking-wider text-ink-500 block">
               Payment providers
             </label>
+            {apps[0]?.owner_email && (
+              <p className="text-xs text-ink-400">
+                Shared across your apps under <span className="font-medium text-ink-600">{apps[0].owner_email}</span>
+              </p>
+            )}
             <div className="space-y-2">
               <label
                 className={
@@ -154,17 +167,37 @@ export default function NewAppPage() {
                     Reuse Stripe / Razorpay / Google Play / App Store from another app — one secret, many apps.
                   </p>
                   {providerMode === "reuse" && apps.length > 0 && (
-                    <select
-                      value={reuseFrom}
-                      onChange={(e) => setReuseFrom(e.target.value)}
-                      className="mt-2 w-full px-3 py-2 bg-white border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
-                    >
-                      {apps.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          Copy providers from “{a.name}”
-                        </option>
-                      ))}
-                    </select>
+                    <>
+                      <select
+                        value={reuseFrom}
+                        onChange={(e) => setReuseFrom(e.target.value)}
+                        className="mt-2 w-full px-3 py-2 bg-white border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+                      >
+                        {apps.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            Copy providers from “{a.name}”
+                          </option>
+                        ))}
+                      </select>
+                      {(() => {
+                        const provs = apps.find((a) => a.id === reuseFrom)?.providers ?? []
+                        return provs.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {provs.map((p) => (
+                              <span
+                                key={p}
+                                className="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-2 py-0.5 text-xs text-ink-700"
+                              >
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                {PROVIDER_LABELS[p] ?? p}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-amber-600">This app has no connected providers yet — pick another or connect later.</p>
+                        )
+                      })()}
+                    </>
                   )}
                 </div>
               </label>

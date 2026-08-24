@@ -26,9 +26,28 @@ export async function GET() {
 
   const { data: apps } = await supabase
     .from("tenants")
-    .select("id, name, plan, api_key_live, created_at")
+    .select("id, name, plan, api_key_live, owner_email, created_at")
     .in("id", tenantIds)
     .order("created_at")
 
-  return NextResponse.json(apps ?? [])
+  // Connected providers per app (for the add-app "reuse providers" picker). The
+  // tenant-admin SELECT policy scopes this to the caller's apps; only provider
+  // NAMES are returned — never any key ciphertext.
+  const { data: provRows } = await supabase
+    .from("tenant_providers")
+    .select("tenant_id, provider, is_active")
+    .in("tenant_id", tenantIds)
+
+  const byTenant: Record<string, string[]> = {}
+  for (const r of (provRows ?? []) as { tenant_id: string; provider: string; is_active: boolean }[]) {
+    if (r.is_active === false) continue
+    ;(byTenant[r.tenant_id] ??= []).push(r.provider)
+  }
+
+  const withProviders = (apps ?? []).map((a: Record<string, unknown>) => ({
+    ...a,
+    providers: byTenant[a.id as string] ?? [],
+  }))
+
+  return NextResponse.json(withProviders)
 }
