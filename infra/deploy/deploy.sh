@@ -497,12 +497,16 @@ phase_5_deploy_cloudflare() {
         return 0
     fi
     command -v npx >/dev/null 2>&1 || { echo "  ✗ node/npx required for cf:deploy"; return 1; }
-    [[ -f "$dash/wrangler.jsonc" ]] || { echo "  ✗ $dash/wrangler.jsonc missing (Cloudflare not configured)"; return 1; }
+    # next-on-pages Pages deploys don't require a repo wrangler.jsonc — the
+    # `nodejs_compat` compatibility flag lives in the Cloudflare Pages project
+    # settings (the migration off OpenNext/Workers removed the Workers-format
+    # wrangler.jsonc on purpose). Treat its absence as informational, not fatal.
+    [[ -f "$dash/wrangler.jsonc" ]] || echo "  ↷ no dashboard/wrangler.jsonc — relying on Pages project settings (nodejs_compat)"
 
     # Pull Cloudflare creds from the vault (SV32-safe; tmpfiles shredded on return).
     local tmpd; tmpd=$(mktemp -d); trap 'rm -rf "$tmpd" 2>/dev/null' RETURN
-    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias mbs-cloudflare-account-id      --to-file "$tmpd/acct" 2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-account-id"; return 1; }
-    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias mbs-cloudflare-pages-api-token --to-file "$tmpd/tok"  2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-pages-api-token"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" mbs-cloudflare-account-id      --to-file "$tmpd/acct" 2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-account-id"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" mbs-cloudflare-pages-api-token --to-file "$tmpd/tok"  2>/dev/null || { echo "  ✗ vault pull: mbs-cloudflare-pages-api-token"; return 1; }
 
     # CRITICAL: Next.js INLINES every `process.env.NEXT_PUBLIC_*` at BUILD time.
     # A developer's `.env.local` (local Supabase http://127.0.0.1:54321) would bake
@@ -512,8 +516,8 @@ phase_5_deploy_cloudflare() {
     # right before the build. Gitignored via dashboard/.gitignore `.env*.local`.
     local ep="$dash/.env.production.local"
     : > "$ep"; chmod 600 "$ep"
-    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias framework-supabase-url      --to-file "$tmpd/sburl" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-url"; return 1; }
-    bash "$FW_ROOT/core/scripts/secrets-get.sh" --alias framework-supabase-anon-key --to-file "$tmpd/sbanon" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-anon-key"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" framework-supabase-url      --to-file "$tmpd/sburl" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-url"; return 1; }
+    bash "$FW_ROOT/core/scripts/secrets-get.sh" framework-supabase-anon-key --to-file "$tmpd/sbanon" 2>/dev/null || { echo "  ✗ vault pull: framework-supabase-anon-key"; return 1; }
     {
         printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n'          "$(cat "$tmpd/sburl")"
         printf 'NEXT_PUBLIC_PAYCRAFT_SUPABASE_URL=%s\n' "$(cat "$tmpd/sburl")"
