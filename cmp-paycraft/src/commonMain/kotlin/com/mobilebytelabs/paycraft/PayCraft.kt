@@ -160,6 +160,25 @@ object PayCraft {
     val paywallPresentation: StateFlow<PaywallPresentation> = _paywallPresentation.asStateFlow()
 
     /**
+     * The [BillingManager] — the entry point for HEADLESS integration (mode 2).
+     * Instead of the drop-in [com.mobilebytelabs.paycraft.ui.PayCraftPaywall], observe
+     * [BillingManager.billingState] / [BillingManager.isPremium] / [BillingManager.isInTrial]
+     * and drive [checkout] from your OWN UI:
+     *
+     * ```kotlin
+     * val state by PayCraft.billingManager!!.billingState.collectAsState()
+     * when (state) {
+     *     is BillingState.Free    -> UpgradeButton { PayCraft.checkout(plan) }
+     *     is BillingState.Premium -> PremiumContent()
+     *     else                    -> Loading()
+     * }
+     * ```
+     * Null until [initialize] has run (the Koin graph isn't up yet).
+     */
+    val billingManager: BillingManager?
+        get() = KoinPlatform.getKoinOrNull()?.getOrNull<BillingManager>()
+
+    /**
      * The native store's OWN localized price per plan sku (Play `formattedPrice` / StoreKit
      * `displayPrice`), resolved after products load on native billing lanes. When present it is
      * the truth the store charges and OVERRIDES the cloud `/config` price for the paywall + the

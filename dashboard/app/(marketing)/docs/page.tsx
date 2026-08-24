@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 
 const CARDS: { title: string; body: string; href: string; external?: boolean }[] = [
   { title: "Quickstart", body: "Add subscription billing to your KMP app in under 15 minutes.", href: "/docs/quickstart-cloud" },
+  { title: "SDK integration modes", body: "Drop-in themed paywall, or the headless billing API with your own UI.", href: "/docs/sdk-integration" },
   { title: "Migration v1 → v2", body: "Move from PayCraft.configure { } to the v2 dashboard-driven model.", href: "/docs/migration-v1-to-v2" },
   { title: "FAQ", body: "Common questions on providers, pricing, trials, and the SDK.", href: "/docs/faq" },
   { title: "Self-host", body: "Run PayCraft on your own Supabase backend — Docker Compose or Helm.", href: "/self-host" },
