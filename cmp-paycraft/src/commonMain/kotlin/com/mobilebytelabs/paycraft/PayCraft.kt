@@ -179,6 +179,14 @@ object PayCraft {
         get() = KoinPlatform.getKoinOrNull()?.getOrNull<BillingManager>()
 
     /**
+     * The purchasable plans for HEADLESS integration (mode 2) — rebuilt from the
+     * dashboard config + resolved native-store prices. Empty until the first
+     * SuiteConfig fetch resolves (collect [suiteConfigFlow] to recompose when it
+     * lands). Pass one of these to [checkout].
+     */
+    val plans: List<BillingPlan> get() = config?.plans ?: emptyList()
+
+    /**
      * The native store's OWN localized price per plan sku (Play `formattedPrice` / StoreKit
      * `displayPrice`), resolved after products load on native billing lanes. When present it is
      * the truth the store charges and OVERRIDES the cloud `/config` price for the paywall + the
