@@ -25,15 +25,18 @@ serve(withWebhookRateLimit({ bucket: "webhook:paddle" }, async (req) => {
 
   const body = await req.text();
 
-  // Verify Paddle signature
+  // Verify Paddle signature — FAIL CLOSED: unset secret → 500, missing signature → 401.
   const paddleSig = req.headers.get("paddle-signature") || "";
-  if (webhookSecret && paddleSig) {
+  if (!webhookSecret) return new Response("Webhook secret not configured", { status: 500 });
+  if (!paddleSig) return new Response("Missing signature", { status: 401 });
+  {
     const parts = Object.fromEntries(
       paddleSig.split(";").map((p: string) => p.split("=") as [string, string])
     );
     const ts = parts["ts"];
     const h1 = parts["h1"];
-    if (ts && h1) {
+    if (!ts || !h1) return new Response("Malformed signature", { status: 401 });
+    {
       const payload = `${ts}:${body}`;
       const key = new TextEncoder().encode(webhookSecret);
       const data = new TextEncoder().encode(payload);

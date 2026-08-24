@@ -29,8 +29,10 @@ serve(withWebhookRateLimit({ bucket: "webhook:midtrans" }, async (req) => {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Verify Midtrans signature
-  if (serverKey && notification.signature_key) {
+  // Verify Midtrans signature — FAIL CLOSED: unset secret → 500, missing signature → 401.
+  if (!serverKey) return new Response("Webhook secret not configured", { status: 500 });
+  if (!notification.signature_key) return new Response("Missing signature", { status: 401 });
+  {
     const payload = `${notification.order_id}${notification.status_code}${notification.gross_amount}${serverKey}`;
     const data = new TextEncoder().encode(payload);
     const hash = await crypto.subtle.digest("SHA-512", data);

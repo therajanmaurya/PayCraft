@@ -35,8 +35,10 @@ serve(withWebhookRateLimit({ bucket: "webhook:paypal" }, async (req) => {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Verify webhook signature via PayPal API
-  if (webhookId && clientId && clientSecret) {
+  // Verify webhook signature via PayPal API — FAIL CLOSED: unset config → 500,
+  // any verify failure/exception → 401 (never fall through to processing).
+  if (!webhookId || !clientId || !clientSecret) return new Response("Webhook verification not configured", { status: 500 });
+  {
     try {
       const authRes = await fetch(`${baseUrl}/v1/oauth2/token`, {
         method: "POST",
@@ -71,6 +73,7 @@ serve(withWebhookRateLimit({ bucket: "webhook:paypal" }, async (req) => {
       }
     } catch (err: any) {
       console.error("PayPal verification error:", err.message);
+      return new Response("Signature verification error", { status: 401 });
     }
   }
 

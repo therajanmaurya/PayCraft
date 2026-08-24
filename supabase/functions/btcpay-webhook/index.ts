@@ -23,8 +23,9 @@ serve(withWebhookRateLimit({ bucket: "webhook:btcpay" }, async (req) => {
 
   const body = await req.text();
 
-  // Verify BTCPay HMAC signature
-  if (webhookSecret) {
+  // Verify BTCPay HMAC signature — FAIL CLOSED: unset secret or missing/wrong sig rejected.
+  if (!webhookSecret) return new Response("Webhook secret not configured", { status: 500 });
+  {
     const sigHeader = req.headers.get("btcpay-sig") || "";
     const expectedSig = sigHeader.replace("sha256=", "");
     const key = new TextEncoder().encode(webhookSecret);

@@ -19,8 +19,9 @@ serve(withWebhookRateLimit({ bucket: "webhook:flutterwave" }, async (req) => {
   const pathParts = url.pathname.split("/").filter(Boolean);
   const tenantId: string | null = pathParts.length > 3 ? pathParts[3] : null;
 
-  // Verify hash
-  if (secretHash) {
+  // Verify hash — FAIL CLOSED: unset secret or missing/wrong hash is rejected.
+  if (!secretHash) return new Response("Webhook secret not configured", { status: 500 });
+  {
     const hash = req.headers.get("verif-hash") || "";
     if (hash !== secretHash) {
       console.error("Flutterwave hash mismatch");
