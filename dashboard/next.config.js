@@ -30,15 +30,8 @@ const CORS_HEADERS = [
 
 const nextConfig = {
   // Vercel Hobby tier compatible
-  //
-  // Marketing nav links to /docs and /self-host, but no page exists at those
-  // paths (only /docs/quickstart-cloud + /docs/case-studies/*), so they 404.
-  // Temporary redirects (307) send them to the real docs entry point until a
-  // dedicated /docs index + /self-host page are authored — then drop these.
   async redirects() {
     return [
-      { source: '/docs', destination: '/docs/quickstart-cloud', permanent: false },
-      { source: '/self-host', destination: '/docs/quickstart-cloud', permanent: false },
       // Folded in from the retired dashboard/vercel.json on the Cloudflare
       // migration (2026-08-23) — host-agnostic now that we run on Workers.
       { source: '/app', destination: '/dashboard', permanent: false },

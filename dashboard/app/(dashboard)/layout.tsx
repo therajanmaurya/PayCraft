@@ -9,6 +9,7 @@ import { ModeToggle, TestModeBanner } from "@/components/mode-toggle"
 import { requireTenant, getUserApps } from "@/lib/tenant"
 import { getMode } from "@/lib/mode"
 import { createClient } from "@/lib/supabase-server"
+import { RealtimeRefresh } from "@/components/realtime-refresh"
 
 export default async function DashboardLayout({
   children,
@@ -36,6 +37,10 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-ink-50 antialiased">
+      {/* Realtime island (invisible): live-refreshes every dashboard page when the
+          active app's billing data changes — products, pricing, paywall, coupons,
+          subscribers, and provider-sync status — no manual reload. */}
+      <RealtimeRefresh tenantId={activeTenantId} />
       {/* GraceBanner renders nothing for tenants outside warn/grace; sits above
           nav so it's visible on every authenticated route (AC-44). */}
       <GraceBanner />

@@ -8,6 +8,7 @@ import com.mobilebytelabs.paycraft.core.BillingManager
 import com.mobilebytelabs.paycraft.core.EntitlementRepository
 import com.mobilebytelabs.paycraft.core.PayCraftBillingManager
 import com.mobilebytelabs.paycraft.network.CouponClient
+import com.mobilebytelabs.paycraft.network.PayCraftRealtime
 import com.mobilebytelabs.paycraft.network.PayCraftService
 import com.mobilebytelabs.paycraft.network.PayCraftServiceImpl
 import com.mobilebytelabs.paycraft.persistence.EntitlementCache
@@ -17,6 +18,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.realtime.Realtime
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
@@ -40,6 +42,7 @@ val PayCraftModule = module {
         ) {
             install(Postgrest)
             install(Auth)
+            install(Realtime)
         }
     }
 
@@ -57,6 +60,10 @@ val PayCraftModule = module {
     single<com.mobilebytelabs.paycraft.persistence.PayCraftStore> {
         com.mobilebytelabs.paycraft.persistence.PayCraftSettingsStore()
     }
+
+    // Realtime push (broadcast) — refetch /config + force entitlement refresh on
+    // server-side change instead of waiting for the cache-TTL/foreground poll.
+    single { PayCraftRealtime(get<SupabaseClient>(qualifier = named("paycraft"))) }
 
     // ─── Phase 4: Store5 offline cache + restore/cancel orchestration ─────────
 

@@ -20,6 +20,8 @@ import com.mobilebytelabs.paycraft.debug.PayCraftLogger
 import com.mobilebytelabs.paycraft.model.BillingBenefit
 import com.mobilebytelabs.paycraft.model.BillingPlan
 import com.mobilebytelabs.paycraft.network.CouponClient
+import com.mobilebytelabs.paycraft.network.PayCraftRealtime
+import com.mobilebytelabs.paycraft.persistence.PayCraftStore
 import com.mobilebytelabs.paycraft.platform.DeviceFingerprint
 import com.mobilebytelabs.paycraft.platform.PlatformInfo
 import com.mobilebytelabs.paycraft.platform.currentTimeMillis
@@ -519,6 +521,32 @@ object PayCraft {
             "loadConfig",
             "active region → country=$_activeCountry currency=$_activeCurrency",
         )
+        // Now that tenant_id is known, wire realtime push: a `config:{tenant}` ping
+        // refetches /config (kills the cache-TTL lag), an `entitlement:{tenant}:{user}`
+        // ping force-refreshes status. Additive over the existing TTL/foreground sync.
+        startRealtime(suite.tenantId)
+    }
+
+    /**
+     * Subscribe the SDK to its realtime broadcast channels (best-effort; failures
+     * leave the TTL/foreground sync as the fallback). Idempotent — safe to call on
+     * every config apply; the realtime client no-ops when already subscribed and
+     * re-subscribes the entitlement channel when the buyer's identity changes.
+     */
+    private fun startRealtime(tenantId: String) {
+        val koin = KoinPlatform.getKoinOrNull() ?: return
+        val realtime = koin.getOrNull<PayCraftRealtime>() ?: return
+        realtime.ensureConfigChannel(tenantId) {
+            configFetchJob = applicationScope.launch { runCatching { prefetchProducts() } }
+        }
+        applicationScope.launch {
+            val email = runCatching { koin.getOrNull<PayCraftStore>()?.getEmail() }.getOrNull()
+            val appUserId = email?.trim()?.lowercase()?.ifBlank { null } ?: deviceId
+            val billing = koin.getOrNull<BillingManager>()
+            realtime.ensureEntitlementChannel(tenantId, appUserId) {
+                billing?.refreshStatus(force = true)
+            }
+        }
     }
 
     fun requireConfig(): PayCraftConfig = config ?: error("PayCraft.initialize(apiKey) must be called before use")
