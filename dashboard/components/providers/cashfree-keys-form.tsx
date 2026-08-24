@@ -33,6 +33,7 @@ export function CashfreeKeysForm({
   const router = useRouter()
   const [test, setTest] = useState<KeyPair>(EMPTY)
   const [live, setLive] = useState<KeyPair>(EMPTY)
+  const [accountLabel, setAccountLabel] = useState("")
   const [showLive, setShowLive] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -53,6 +54,7 @@ export function CashfreeKeysForm({
           live_app_id: showLive ? live.app_id : "",
           live_secret_key: showLive ? live.secret_key : "",
           live_webhook_secret: showLive ? live.webhook_secret : "",
+          account_label: accountLabel,
         }),
       })
       const data = await res.json()
@@ -96,6 +98,16 @@ export function CashfreeKeysForm({
           <ConnectedHint label="Live app ID" value={liveKeyId} />
         </div>
       )}
+
+      <Field label="Account label / email (optional)">
+        <input
+          type="text"
+          className="w-full px-4 py-2.5 bg-ink-50 border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+          placeholder="team@your-org.com — shown when reusing this connection"
+          value={accountLabel}
+          onChange={(e) => setAccountLabel(e.target.value)}
+        />
+      </Field>
 
       <KeyTriplet
         label="Test keys"

@@ -19,6 +19,7 @@ import { requireTenant } from "@/lib/tenant"
 interface Body {
   service_account_json: string
   package_name: string
+  account_label: string
 }
 
 export async function POST(req: NextRequest) {
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
   // First-save vs partial-update branch — same detection as the PSP routes.
   const { data: existing } = await supabase
     .from("tenant_providers")
-    .select("store_credential_enc")
+    .select("store_credential_enc, store_config")
     .eq("tenant_id", tenant.id)
     .eq("provider", "google_play")
     .maybeSingle()
@@ -65,11 +66,30 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Auto-capture the service-account email (a NON-secret identifier) so it can be
+  // shown in the app-switcher / "reuse providers" picker without ever decrypting
+  // the credential. Derived from the uploaded JSON; preserved from the existing
+  // config on a package-only update.
+  const existingCfg = (existing?.store_config as Record<string, unknown> | null) ?? {}
+  let accountEmail = (existingCfg.account_email as string) ?? undefined
+  if (saJson) {
+    try {
+      accountEmail = (JSON.parse(saJson) as { client_email?: string }).client_email ?? accountEmail
+    } catch {
+      /* validated above */
+    }
+  }
+  const config: Record<string, unknown> = { package_name: packageName }
+  if (accountEmail) config.account_email = accountEmail
+  // Optional operator-supplied label overrides what's shown; else the SA email is used.
+  const accountLabel = (body.account_label ?? "").trim() || ((existingCfg.account_label as string) ?? "")
+  if (accountLabel) config.account_label = accountLabel
+
   const { error } = await supabase.rpc("tenant_providers_save_store_keys", {
     p_tenant_id: tenant.id,
     p_provider: "google_play",
     p_credential: saJson || "", // "" → keep existing blob on update
-    p_config: { package_name: packageName },
+    p_config: config,
   })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, mode: isUpdate ? "update" : "create" })

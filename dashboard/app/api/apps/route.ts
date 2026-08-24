@@ -52,13 +52,18 @@ export async function GET() {
   const mask = (k: string) => (k.length > 14 ? `${k.slice(0, 8)}…${k.slice(-4)}` : k)
   const accountOf = (r: ProvRow): string | null => {
     const cfg = r.store_config ?? {}
+    // An operator-supplied label always wins — it's the "which account is this?"
+    // answer they chose. Falls back to a provider-natural identifier.
+    const label = (cfg.account_label as string) || null
+    if (label) return label
     switch (r.provider) {
       case "google_play":
         return (cfg.account_email as string) ?? (cfg.package_name as string) ?? null
       case "app_store":
         return cfg.issuer_id ? `issuer ${String(cfg.issuer_id).slice(0, 8)}…` : ((cfg.bundle_id as string) ?? null)
       case "stripe":
-      case "razorpay": {
+      case "razorpay":
+      case "cashfree": {
         const k = r.live_key_id ?? r.test_key_id
         return k ? mask(k) : null
       }

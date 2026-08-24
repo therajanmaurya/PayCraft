@@ -22,6 +22,7 @@ interface Body {
   key_id: string
   issuer_id: string
   bundle_id: string
+  account_label: string
 }
 
 export async function POST(req: NextRequest) {
@@ -33,10 +34,12 @@ export async function POST(req: NextRequest) {
   const keyId = (body.key_id ?? "").trim()
   const issuerId = (body.issuer_id ?? "").trim()
   const bundleId = (body.bundle_id ?? "").trim()
+  // A non-secret "which Apple account is this?" label (e.g. the team's email).
+  const accountLabel = (body.account_label ?? "").trim()
 
   const { data: existing } = await supabase
     .from("tenant_providers")
-    .select("store_credential_enc")
+    .select("store_credential_enc, store_config")
     .eq("tenant_id", tenant.id)
     .eq("provider", "app_store")
     .maybeSingle()
@@ -63,11 +66,17 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const existingCfg = (existing?.store_config as Record<string, unknown> | null) ?? {}
+  const config: Record<string, unknown> = { key_id: keyId, issuer_id: issuerId, bundle_id: bundleId }
+  // Preserve any prior label unless the operator typed a new one.
+  const label = accountLabel || (existingCfg.account_label as string) || ""
+  if (label) config.account_label = label
+
   const { error } = await supabase.rpc("tenant_providers_save_store_keys", {
     p_tenant_id: tenant.id,
     p_provider: "app_store",
     p_credential: p8 || "", // "" → keep existing blob on update
-    p_config: { key_id: keyId, issuer_id: issuerId, bundle_id: bundleId },
+    p_config: config,
   })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, mode: isUpdate ? "update" : "create" })

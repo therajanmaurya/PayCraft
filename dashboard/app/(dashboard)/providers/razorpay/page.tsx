@@ -578,6 +578,7 @@ function ManualKeysPanel({
 }) {
   const [test, setTest] = useState<KeyPair>(EMPTY_KEYS)
   const [live, setLive] = useState<KeyPair>(EMPTY_KEYS)
+  const [accountLabel, setAccountLabel] = useState("")
   const [showLive, setShowLive] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -615,6 +616,7 @@ function ManualKeysPanel({
             live_key_id: showLive ? live.key_id : "",
             live_key_secret: showLive ? live.key_secret : "",
             live_webhook_secret: showLive ? live.webhook_secret : "",
+            account_label: accountLabel,
           }
         : {
             test_key_id: test.key_id,
@@ -623,6 +625,7 @@ function ManualKeysPanel({
             live_key_id: showLive ? live.key_id : test.key_id,
             live_key_secret: showLive ? live.key_secret : test.key_secret,
             live_webhook_secret: showLive ? live.webhook_secret : test.webhook_secret,
+            account_label: accountLabel,
           }
       const res = await fetch("/api/providers/razorpay/keys", {
         method: "POST",
@@ -647,6 +650,7 @@ function ManualKeysPanel({
     test.key_id ||
     test.key_secret ||
     test.webhook_secret ||
+    accountLabel ||
     (showLive && (live.key_id || live.key_secret || live.webhook_secret))
   const canSave = isUpdate ? !!anyTouched : !!(testFilled && liveFilled)
 
@@ -699,6 +703,20 @@ function ManualKeysPanel({
             onChange={setTest}
             isUpdate={isUpdate}
           />
+
+          {/* Non-secret account label — shown when reusing this connection across apps. */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-400 block">
+              Account label / email <span className="font-normal normal-case text-ink-400">(optional)</span>
+            </label>
+            <input
+              type="text"
+              className="w-full px-4 py-2.5 bg-ink-50 border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+              placeholder="billing@your-org.com — helps you tell accounts apart"
+              value={accountLabel}
+              onChange={(e) => setAccountLabel(e.target.value)}
+            />
+          </div>
 
           <div className="pt-2 border-t border-ink-100">
             <label className="flex items-center gap-3 cursor-pointer mb-4">

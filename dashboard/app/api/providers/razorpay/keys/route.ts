@@ -28,6 +28,27 @@ interface SaveBody {
   live_key_id: string
   live_key_secret: string
   live_webhook_secret: string
+  account_label: string
+}
+
+/**
+ * Persist a non-secret "which account is this?" label. tenant_providers is
+ * service-role-write-only under RLS, so the label goes through the tenant-admin
+ * guarded RPC (migration 086). Best-effort — never fails the key save.
+ */
+async function saveAccountLabel(
+  supabase: ReturnType<typeof createClient>,
+  tenantId: string,
+  provider: string,
+  label: string,
+) {
+  const l = (label ?? "").trim()
+  if (!l) return
+  await supabase.rpc("tenant_providers_set_account_label", {
+    p_tenant_id: tenantId,
+    p_provider: provider,
+    p_label: l,
+  })
 }
 
 async function validateKeyPair(
@@ -107,6 +128,7 @@ export async function POST(req: NextRequest) {
       p_supported_locales: null,
     })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    await saveAccountLabel(supabase, tenant.id, "razorpay", body.account_label ?? "")
     return NextResponse.json({ ok: true, mode: "update" })
   }
 
@@ -124,5 +146,6 @@ export async function POST(req: NextRequest) {
     p_supported_locales: ["IN"],
   })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await saveAccountLabel(supabase, tenant.id, "razorpay", body.account_label ?? "")
   return NextResponse.json({ ok: true, mode: "create" })
 }

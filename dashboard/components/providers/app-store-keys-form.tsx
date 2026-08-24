@@ -30,6 +30,7 @@ export function AppStoreKeysForm({
   const [kid, setKid] = useState(keyId ?? "")
   const [iss, setIss] = useState(issuerId ?? "")
   const [bid, setBid] = useState(bundleId ?? "")
+  const [accountLabel, setAccountLabel] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -56,6 +57,7 @@ export function AppStoreKeysForm({
           key_id: kid,
           issuer_id: iss,
           bundle_id: bid,
+          account_label: accountLabel,
         }),
       })
       const data = await res.json()
@@ -117,6 +119,19 @@ export function AppStoreKeysForm({
             onChange={(e) => setBid(e.target.value)}
           />
         </Field>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-bold uppercase tracking-wider text-ink-400 block">
+          Account label / email <span className="font-normal normal-case text-ink-400">(optional)</span>
+        </label>
+        <input
+          type="text"
+          className="w-full px-4 py-2 bg-ink-50 border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+          placeholder="team@your-org.com — shown when reusing this connection"
+          value={accountLabel}
+          onChange={(e) => setAccountLabel(e.target.value)}
+        />
       </div>
 
       <div className="space-y-1.5">
