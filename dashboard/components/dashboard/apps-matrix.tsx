@@ -26,11 +26,27 @@ const num = (n: number) => n.toLocaleString()
  * serializable rows.
  */
 export function AppsMatrix({ rows }: { rows: AppMatrixRow[] }) {
+  // Opening an app switches the whole dashboard's active-app context (cookie) and
+  // then lands on that app — so the sidebar, products, subscribers, etc. all scope
+  // to it (RevenueCat-style project switch), not just a read-only detail view.
+  async function openApp(id: string) {
+    try {
+      await fetch("/api/apps/switch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tenant_id: id }),
+      })
+    } catch {
+      /* non-fatal — still navigate */
+    }
+    window.location.href = `/apps/${id}`
+  }
+
   return (
     <DataTable<AppMatrixRow>
       rows={rows}
       rowKey={(r) => r.id}
-      rowHref={(r) => `/apps/${r.id}`}
+      onRowClick={(r) => openApp(r.id)}
       columns={[
         {
           key: "name",
