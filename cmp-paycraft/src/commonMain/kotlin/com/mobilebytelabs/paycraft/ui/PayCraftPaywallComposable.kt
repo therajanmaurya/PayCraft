@@ -38,12 +38,14 @@ import com.mobilebytelabs.paycraft.LocalPayCraftConfig
 import com.mobilebytelabs.paycraft.PayCraft
 import com.mobilebytelabs.paycraft.config.SuiteConfig
 import com.mobilebytelabs.paycraft.model.BillingPlan
+import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Money
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.model.ProductMapper
 import com.mobilebytelabs.paycraft.presentation.PaywallTemplate
 import com.mobilebytelabs.paycraft.presentation.ProviderBottomSheet
 import com.mobilebytelabs.paycraft.provider.StripeProvider
+import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftThemeProvider
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -214,25 +216,40 @@ private fun PayCraftPaywallFullScreenSurface(
                     )
                 }
             }
-            // Delegate the entire BillingState-branch matrix to the v2 template. When
-            // config is null (cold start) fall through to BRANDED_STACK with an empty
-            // product list — the template's Loading branch renders while the cloud fetch
-            // resolves and republishes on the config flow, at which point recomposition
-            // pulls the resolved products through the template's Free/Premium branches.
-            val template = PaywallTemplate.parse(config?.paywall?.template.orEmpty())
-            val products: List<Product> = config?.products
-                ?.filter { it.active }
-                ?.map(ProductMapper::fromDto)
-                ?.sortedBy { it.displayOrder }
-                ?: emptyList()
-            template.render(
-                state = state.billingState,
-                products = products,
-                onPickProduct = { product ->
-                    onAction(PayCraftPaywallAction.SelectPlan(product.toBillingPlan(config)))
-                },
-                onRetry = { onAction(PayCraftPaywallAction.RefreshStatus) },
-            )
+            // Plan cards come from the cloud /config fetch ([PayCraft.suiteConfigFlow]),
+            // which resolves on a SEPARATE signal from [BillingState]. On cold start the
+            // billing manager can resolve Loading → Free (no saved email) BEFORE /config
+            // products arrive — so `config == null` while `state.billingState` is already
+            // Free. Rendering the template's Free branch then would show BrandedStackFree
+            // with an empty ProductList + disabled Continue button and NO shimmer.
+            //
+            // Treat "cloud config not yet resolved" (config == null) as products-still-
+            // loading and render the SAME layout-matched [PaywallSkeleton] the
+            // BillingState.Loading branch uses, until the config flow republishes non-null
+            // (products load "in realtime" via the collectAsState above). Premium buyers
+            // are exempt — their status renders without any product/config. A warm cache
+            // (config already non-null) never forces the skeleton, so there is no flash;
+            // once config resolves non-null the real content renders even if products is
+            // genuinely empty (a real empty-state, not loading).
+            val productsLoading = config == null && state.billingState !is BillingState.Premium
+            if (productsLoading) {
+                PaywallSkeleton(planCount = 3)
+            } else {
+                val template = PaywallTemplate.parse(config?.paywall?.template.orEmpty())
+                val products: List<Product> = config?.products
+                    ?.filter { it.active }
+                    ?.map(ProductMapper::fromDto)
+                    ?.sortedBy { it.displayOrder }
+                    ?: emptyList()
+                template.render(
+                    state = state.billingState,
+                    products = products,
+                    onPickProduct = { product ->
+                        onAction(PayCraftPaywallAction.SelectPlan(product.toBillingPlan(config)))
+                    },
+                    onRetry = { onAction(PayCraftPaywallAction.RefreshStatus) },
+                )
+            }
         }
     }
 }

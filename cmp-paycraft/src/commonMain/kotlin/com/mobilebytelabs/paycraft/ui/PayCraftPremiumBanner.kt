@@ -21,9 +21,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,8 +37,12 @@ import androidx.compose.ui.unit.sp
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
 import com.mobilebytelabs.paycraft.PayCraft
 import com.mobilebytelabs.paycraft.config.PaywallDto
+import com.mobilebytelabs.paycraft.core.BillingManager
+import com.mobilebytelabs.paycraft.model.BillingState
+import com.mobilebytelabs.paycraft.ui.components.skeleton.BannerShimmerRow
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
 import com.mobilebytelabs.paycraft.ui.theme.parseHexColor
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Drop-in Settings-tab premium upsell banner — the consumer-app entry point to
@@ -67,6 +74,16 @@ import com.mobilebytelabs.paycraft.ui.theme.parseHexColor
  * the existing hand-coded banner for this composable is opt-in (90-day grace);
  * the existing `strings.xml` keys stay during the transition so consumers can
  * roll back without churn. See `docs/MIGRATING-TO-PAYCRAFT-PREMIUM-BANNER.md`.
+ *
+ * State-aware: the banner observes [BillingManager.billingState] (via
+ * [billingManager], defaulting to the SDK's live manager) and renders accordingly —
+ * a shimmer card while the status is still resolving (or before init, when the
+ * manager is null), NOTHING when the buyer is already premium (never upsell a paying
+ * user), and the upgrade card only for a free/non-premium buyer.
+ *
+ * @param billingManager Billing manager to observe; defaults to [PayCraft.billingManager]
+ *                       (null before [PayCraft.initialize] — treated as Loading). Tests
+ *                       inject a fake to drive a specific [BillingState].
  */
 @Composable
 fun PayCraftPremiumBanner(
@@ -77,8 +94,29 @@ fun PayCraftPremiumBanner(
     subtitleOverride: String? = null,
     ctaOverride: String? = null,
     restoreOverride: String? = null,
+    billingManager: BillingManager? = PayCraft.billingManager,
 ) {
     val tokens = PayCraftTheme
+
+    // Observe the live billing status so this drop-in upsell is state-aware (it used to
+    // always show "Upgrade to Premium" and never shimmer). A null manager (pre-init /
+    // no Koin graph yet) is treated as Loading. The stable `remember`ed fallback flow
+    // keeps the collectAsState call unconditional (composable-call parity) even as the
+    // global manager flips null → non-null after PayCraft.initialize().
+    val fallbackState = remember { MutableStateFlow<BillingState>(BillingState.Loading) }
+    val billingState by (billingManager?.billingState ?: fallbackState).collectAsState()
+
+    // Premium buyers never see an upsell — collapse to nothing (do NOT nag a paying user).
+    if (billingState is BillingState.Premium) return
+
+    // Status not yet known (Loading, or pre-init null manager) → render a layout-matched
+    // shimmer card instead of a stale "Upgrade" card, reusing the shared [BannerShimmerRow].
+    if (billingState is BillingState.Loading) {
+        PayCraftPremiumBannerShimmer(modifier = modifier)
+        return
+    }
+
+    // Free / non-premium (Error, DeviceConflict, OwnershipVerified) → the upgrade card.
     // Prefer an explicitly-provided LocalPayCraftConfig; otherwise collect the
     // live SDK config reactively so a dashboard edit recomposes the banner once
     // the cloud fetch (or refreshConfig()) publishes it — no cold relaunch needed.
@@ -171,6 +209,37 @@ fun PayCraftPremiumBanner(
                     fontWeight = FontWeight.Medium,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Loading-state stand-in for [PayCraftPremiumBanner] — a layout-matched shimmer card
+ * rendered while the billing status is not yet known (cold-start Loading, or a pre-init
+ * null billing manager). Reuses the shared [BannerShimmerRow] pill so the banner shows a
+ * shimmer instead of a stale "Upgrade to Premium" card, then swaps to the real upgrade
+ * card (or collapses when Premium) once [com.mobilebytelabs.paycraft.core.BillingManager.billingState]
+ * resolves.
+ */
+@Composable
+private fun PayCraftPremiumBannerShimmer(modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Title + subtitle placeholders, then the CTA placeholder — same vertical
+            // rhythm as the loaded card so the swap to real content is shift-free.
+            BannerShimmerRow()
+            BannerShimmerRow()
+            Spacer(Modifier.height(6.dp))
+            BannerShimmerRow()
         }
     }
 }
