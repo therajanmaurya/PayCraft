@@ -54,6 +54,28 @@ function providerSyncMessage(label: string, product: string, entry: ProviderSync
   }
 }
 
+/**
+ * Resolve the free-trial length (in days) for ONE platform from a product body.
+ *
+ * Per-platform model (migration 087): `body.trial_per_platform` is a JSONB map
+ * `{"android":30,"ios":14,"web":7,"desktop":14}` — a key PRESENT with an int means a
+ * trial of that many days on that platform; a key ABSENT/null means NO trial there.
+ * Returning 0 signals "no trial on this platform" — the W2 teardown then removes any
+ * existing offer for that provider automatically.
+ *
+ * Legacy fallback: when `trial_per_platform` is absent/empty, use the single
+ * `trial_enabled` + `trial_duration_days` pair fanned to every platform.
+ *
+ *   platformKey ∈ 'android' (Google Play) | 'ios' (App Store) | 'web' | 'desktop'
+ */
+export function resolvePlatformTrialDays(body: Record<string, any>, platformKey: string): number {
+  const perPlatform = body.trial_per_platform
+  if (perPlatform && typeof perPlatform === "object" && Object.keys(perPlatform).length > 0) {
+    return Number(perPlatform[platformKey] ?? 0)
+  }
+  return body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+}
+
 function buildPriceInputs(body: Record<string, any>): PriceInput[] {
   if (Array.isArray(body.pricing_rows) && body.pricing_rows.length > 0) {
     return body.pricing_rows.map((r: { currency: string; amount_cents: number }) => ({
@@ -90,8 +112,13 @@ export async function stripeSyncProduct(
     const prices = buildPriceInputs(body)
     if (!prices.length) return { skipped: true, reason: "no pricing configured for this product" }
 
+    // Web PSPs (Stripe / Razorpay / Cashfree) all check out through the SAME
+    // web-checkout product, which carries ONE trial_period_days — so web + desktop
+    // cannot have different trial lengths here. Use the 'web' value, falling back to
+    // 'desktop' when only desktop is configured. (Native stores get their own value:
+    // Google Play → 'android', App Store → 'ios'.)
     const trialDays =
-      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+      resolvePlatformTrialDays(body, "web") || resolvePlatformTrialDays(body, "desktop")
 
     const result = await syncProductToStripe(
       tenantId,
@@ -315,8 +342,8 @@ export async function googlePlaySyncProduct(
 
     // Free-trial length drives a FREE_TRIAL offer on the base plan so the Play
     // cart actually grants the trial the paywall advertises (Subscriptions policy).
-    const trialDays =
-      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+    // Android reads the per-platform 'android' value (0 → W2 teardown removes the offer).
+    const trialDays = resolvePlatformTrialDays(body, "android")
 
     const result = await syncProductToGooglePlay(
       { serviceAccountJson: decrypted.credential, packageName },
@@ -398,8 +425,9 @@ export async function appStoreSyncProduct(
       amountCents: p.amountCents,
     }))
 
-    const trialDays =
-      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+    // iOS (App Store) reads the per-platform 'ios' value (0 → W2 teardown removes
+    // the StoreKit introductory offer).
+    const trialDays = resolvePlatformTrialDays(body, "ios")
 
     const result = await syncProductToAppStore(
       {
