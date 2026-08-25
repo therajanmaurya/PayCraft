@@ -36,7 +36,12 @@ kotlin {
         androidResources.enable = true
     }
 
-    iosX64()
+    // iosX64 (Intel-Mac iOS simulator) dropped 2026-08-26: Compose Multiplatform 1.11.0
+    // (bumped with Kotlin 2.4.0) no longer publishes an iosX64 variant — only iosArm64 +
+    // iosSimulatorArm64 — so `org.jetbrains.compose.runtime:runtime:1.11.0` cannot resolve
+    // for iosX64 and "Compile All Targets" fails. iosX64 is the legacy Intel-simulator target;
+    // real devices use iosArm64 and Apple-Silicon simulators use iosSimulatorArm64, so nothing
+    // shipped is lost. Re-add iosX64() if a future CMP re-publishes it.
     iosArm64()
     iosSimulatorArm64()
 

@@ -99,7 +99,10 @@ class PayCraftRealtime(private val supabase: SupabaseClient) {
                     entitlementKey = key
                     PayCraftLogger.onFlow("realtime", "subscribed entitlement:$tenantId:***")
                 }.onFailure {
-                    PayCraftLogger.onFlow("realtime", "entitlement subscribe failed (TTL fallback stays): ${it.message}")
+                    PayCraftLogger.onFlow(
+                        "realtime",
+                        "entitlement subscribe failed (TTL fallback stays): ${it.message}",
+                    )
                 }
             }
         }

@@ -36,7 +36,9 @@ tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
 spotless {
     kotlin {
         target("**/*.kt")
-        targetExclude("**/build/**/*.kt", "**/.gradle/**/*.kt")
+        // `sample/` is a loose reference snippet (not a compiled module) — wildcard imports keep it
+        // readable as documentation; it is not production source, so it is excluded from lint.
+        targetExclude("**/build/**/*.kt", "**/.gradle/**/*.kt", "sample/**/*.kt")
         ktlint(libs.versions.ktlint.get())
             .editorConfigOverride(
                 mapOf(

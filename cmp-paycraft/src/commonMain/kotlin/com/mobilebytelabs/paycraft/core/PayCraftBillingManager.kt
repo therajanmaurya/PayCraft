@@ -405,7 +405,10 @@ class PayCraftBillingManager(
 
         val normalized = email.trim().lowercase()
         _userEmail.value = normalized
-        scope.launch { store.saveEmail(normalized); PayCraft.refreshRealtimeIdentity() }
+        scope.launch {
+            store.saveEmail(normalized)
+            PayCraft.refreshRealtimeIdentity()
+        }
 
         // If there's an active conflict and the verified email matches → ownership proven.
         val pendingToken = DeviceTokenStore.getToken()
@@ -578,7 +581,10 @@ class PayCraftBillingManager(
         _billingState.value = BillingState.Free
         lastConflict = null
         store.clearCache()
-        scope.launch { store.clearEmail(); PayCraft.refreshRealtimeIdentity() } // drop old user's entitlement channel (audit M1)
+        scope.launch {
+            store.clearEmail()
+            PayCraft.refreshRealtimeIdentity()
+        } // drop old user's entitlement channel (audit M1)
     }
 
     // ─── Store5 entitlement gating (Phase 4 — cache-first + revalidate) ───────
