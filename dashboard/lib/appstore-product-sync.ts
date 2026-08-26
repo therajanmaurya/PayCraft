@@ -56,18 +56,33 @@ export interface AppStoreSyncResult {
   introductoryOfferActive?: boolean
   /** Human-readable reason the intro offer isn't active (present iff a trial was requested but not set). */
   introductoryOfferError?: string
+  /**
+   * Whether a previously-existing FREE_TRIAL introductory offer was REMOVED (or was
+   * already absent) on a DISABLE-trial sync. Set only in the no-trial branch — the
+   * mirror of introductoryOfferActive. Without this cleanup a stale intro offer
+   * lingers on the store and StoreKit keeps granting a trial the paywall no longer
+   * advertises.
+   */
+  introductoryOfferRemoved?: boolean
 }
 
 /**
- * App Store introductory-offer durations are a FIXED enum, not arbitrary days —
- * map the requested trial length to the NEAREST allowed duration (Apple rejects
- * anything else). 14 → TWO_WEEKS, 30 → ONE_MONTH, etc.
+ * App Store introductory-offer durations are a FIXED enum, not arbitrary days.
+ * When the requested trial length is EXACTLY one of Apple's allowed durations we
+ * map it 1:1 (3 → THREE_DAYS, 7 → ONE_WEEK, 14 → TWO_WEEKS, 30 → ONE_MONTH,
+ * 60 → TWO_MONTHS, 90 → THREE_MONTHS, 180 → SIX_MONTHS, 365 → ONE_YEAR) so a
+ * standard trial round-trips with zero drift; only an off-ladder value snaps to
+ * the NEAREST allowed duration (Apple rejects anything else).
  */
 function ascIntroDuration(days: number): string {
   const table: Array<[number, string]> = [
     [3, "THREE_DAYS"], [7, "ONE_WEEK"], [14, "TWO_WEEKS"], [30, "ONE_MONTH"],
     [60, "TWO_MONTHS"], [90, "THREE_MONTHS"], [180, "SIX_MONTHS"], [365, "ONE_YEAR"],
   ]
+  // Exact match wins — map 1:1, no snapping.
+  const exact = table.find((row) => row[0] === days)
+  if (exact) return exact[1]
+  // No exact match → snap to the nearest allowed duration (fallback).
   let best = table[0]
   let bestDelta = Number.POSITIVE_INFINITY
   for (const row of table) {
@@ -136,6 +151,54 @@ async function ensureIntroductoryOffer(
     active: false,
     error: `free-trial introductory offer not set (${createRes.status}): ${body.slice(0, 200)}`,
   }
+}
+
+/**
+ * Ensure NO FREE_TRIAL introductory offer lingers on the subscription when the
+ * product's trial is turned OFF. The mirror of [ensureIntroductoryOffer]: lists
+ * the subscription's introductory offers and DELETEs any FREE_TRIAL one via
+ * DELETE /v1/subscriptionIntroductoryOffers/{id}. (Unlike Play base-plan offers,
+ * ASC introductory offers have no reversible deactivate — delete is the only
+ * teardown, and a re-enable simply re-creates it.) Idempotent: no FREE_TRIAL
+ * present → no-op. Best-effort: never throws; returns a reason string on failure
+ * so a cleanup problem warns rather than aborting the whole product sync.
+ */
+async function ensureNoIntroductoryOffer(
+  token: string,
+  subscriptionId: string,
+): Promise<{ removed: boolean; error?: string }> {
+  const listRes = await ascFetch(
+    token,
+    `/v1/subscriptions/${subscriptionId}/introductoryOffers?limit=10`,
+  )
+  if (!listRes.ok) {
+    const err = `introductoryOffers.list failed (${listRes.status}): ${(await listRes.text()).slice(0, 200)}`
+    console.warn(`[appstore-product-sync] free-trial cleanup: ${err}`)
+    return { removed: false, error: err }
+  }
+  const list = await listRes.json()
+  const freeTrials = (list.data ?? []).filter(
+    (o: any) => o?.attributes?.offerMode === "FREE_TRIAL" && o?.id,
+  )
+  if (freeTrials.length === 0) return { removed: false } // nothing to clean up
+
+  let removedAny = false
+  let firstErr: string | undefined
+  for (const offer of freeTrials) {
+    const delRes = await ascFetch(
+      token,
+      `/v1/subscriptionIntroductoryOffers/${offer.id}`,
+      { method: "DELETE" },
+    )
+    if (delRes.ok || delRes.status === 404) {
+      removedAny = true
+      continue
+    }
+    const err = `introductoryOffers.delete failed for ${offer.id} (${delRes.status}): ${(await delRes.text()).slice(0, 200)}`
+    console.warn(`[appstore-product-sync] free-trial cleanup: ${err}`)
+    if (!firstErr) firstErr = err
+  }
+  return { removed: removedAny, error: firstErr }
 }
 
 /** PayCraft billing interval → ASC subscriptionPeriod enum. */
@@ -337,6 +400,11 @@ export async function syncProductToAppStore(
   const token = await appStoreConnectToken(creds)
   const wantsTrial = typeof trialDays === "number" && trialDays > 0
 
+  // Universal-purchase apps share ONE App Store Connect app (one bundle id, one
+  // set of subscription groups) across iOS + macOS + tvOS binaries. The single
+  // subscription + introductory offer synced here therefore already applies to the
+  // Mac build automatically — there is no separate macOS bundle id, subscription
+  // group, or sync path to provision. Do NOT add a macos branch or second bundle.
   const appId = await resolveAppId(token, creds.bundleId)
   const groupId = await ensureSubscriptionGroup(token, appId)
 
@@ -347,7 +415,12 @@ export async function syncProductToAppStore(
   // Provision the FREE_TRIAL introductory offer once the subscription exists,
   // in BOTH branches, so re-syncing an existing subscription can add a trial.
   const withTrial = async (base: AppStoreSyncResult): Promise<AppStoreSyncResult> => {
-    if (!wantsTrial) return base
+    if (!wantsTrial) {
+      // Trial DISABLED → delete any stale FREE_TRIAL intro offer so StoreKit stops
+      // granting a trial the paywall no longer advertises.
+      const r = await ensureNoIntroductoryOffer(token, base.subscriptionResourceId)
+      return { ...base, introductoryOfferActive: false, introductoryOfferRemoved: r.removed, introductoryOfferError: r.error }
+    }
     const t = await ensureIntroductoryOffer(token, base.subscriptionResourceId, trialDays as number)
     return { ...base, introductoryOfferActive: t.active, introductoryOfferError: t.error }
   }

@@ -21,6 +21,59 @@ interface SyncOptions {
    * each stays well under the cap. Result is merged into the existing sync_state.
    */
   onlyProvider?: "stripe" | "razorpay" | "cashfree" | "google_play" | "app_store"
+  /**
+   * When set, runProductSync emits a `sync_events` row per (product × provider)
+   * start + result so the dashboard can show a live, human-readable progress
+   * dialog. [productName] labels the events; all events share this [runId].
+   */
+  runId?: string
+  productName?: string
+}
+
+const PROVIDER_LABEL: Record<string, string> = {
+  stripe: "Stripe",
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  google_play: "Google Play",
+  app_store: "App Store",
+}
+
+/** Human, per-provider result line for the live sync dialog. */
+function providerSyncMessage(label: string, product: string, entry: ProviderSyncEntry): string {
+  switch (entry.status) {
+    case "synced":
+      return `${label}: ${product} synced`
+    case "draft":
+      return `${label}: ${product} base synced — offer pending (${entry.reason ?? entry.warning ?? "draft"})`
+    case "skipped":
+      return `${label}: skipped — ${entry.reason ?? "not applicable"}`
+    case "failed":
+      return `${label}: failed — ${entry.error ?? entry.reason ?? "error"}`
+    default:
+      return `${label}: ${entry.status}`
+  }
+}
+
+/**
+ * Resolve the free-trial length (in days) for ONE platform from a product body.
+ *
+ * Per-platform model (migration 087): `body.trial_per_platform` is a JSONB map
+ * `{"android":30,"ios":14,"web":7,"desktop":14}` — a key PRESENT with an int means a
+ * trial of that many days on that platform; a key ABSENT/null means NO trial there.
+ * Returning 0 signals "no trial on this platform" — the W2 teardown then removes any
+ * existing offer for that provider automatically.
+ *
+ * Legacy fallback: when `trial_per_platform` is absent/empty, use the single
+ * `trial_enabled` + `trial_duration_days` pair fanned to every platform.
+ *
+ *   platformKey ∈ 'android' (Google Play) | 'ios' (App Store) | 'web' | 'desktop'
+ */
+export function resolvePlatformTrialDays(body: Record<string, any>, platformKey: string): number {
+  const perPlatform = body.trial_per_platform
+  if (perPlatform && typeof perPlatform === "object" && Object.keys(perPlatform).length > 0) {
+    return Number(perPlatform[platformKey] ?? 0)
+  }
+  return body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
 }
 
 function buildPriceInputs(body: Record<string, any>): PriceInput[] {
@@ -59,8 +112,13 @@ export async function stripeSyncProduct(
     const prices = buildPriceInputs(body)
     if (!prices.length) return { skipped: true, reason: "no pricing configured for this product" }
 
+    // Web PSPs (Stripe / Razorpay / Cashfree) all check out through the SAME
+    // web-checkout product, which carries ONE trial_period_days — so web + desktop
+    // cannot have different trial lengths here. Use the 'web' value, falling back to
+    // 'desktop' when only desktop is configured. (Native stores get their own value:
+    // Google Play → 'android', App Store → 'ios'.)
     const trialDays =
-      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+      resolvePlatformTrialDays(body, "web") || resolvePlatformTrialDays(body, "desktop")
 
     const result = await syncProductToStripe(
       tenantId,
@@ -284,8 +342,8 @@ export async function googlePlaySyncProduct(
 
     // Free-trial length drives a FREE_TRIAL offer on the base plan so the Play
     // cart actually grants the trial the paywall advertises (Subscriptions policy).
-    const trialDays =
-      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+    // Android reads the per-platform 'android' value (0 → W2 teardown removes the offer).
+    const trialDays = resolvePlatformTrialDays(body, "android")
 
     const result = await syncProductToGooglePlay(
       { serviceAccountJson: decrypted.credential, packageName },
@@ -367,8 +425,9 @@ export async function appStoreSyncProduct(
       amountCents: p.amountCents,
     }))
 
-    const trialDays =
-      body.trial_enabled && body.trial_duration_days ? Number(body.trial_duration_days) : 0
+    // iOS (App Store) reads the per-platform 'ios' value (0 → W2 teardown removes
+    // the StoreKit introductory offer).
+    const trialDays = resolvePlatformTrialDays(body, "ios")
 
     const result = await syncProductToAppStore(
       {
@@ -487,12 +546,40 @@ export async function runProductSync(
     app_store: () => appStoreSyncProduct(supabase, opts),
   }
   const keys = onlyProvider ? [onlyProvider] : Object.keys(runners)
-  const results = await Promise.all(keys.map((k) => runners[k]()))
+  const product = opts.productName ?? "product"
+  const emit = opts.runId
+    ? (phase: string, provider: string | null, status: string | null, message: string) =>
+        supabase
+          .rpc("sync_event_emit", {
+            p_run_id: opts.runId,
+            p_tenant_id: opts.tenantId,
+            p_product_id: productId,
+            p_product_name: opts.productName ?? null,
+            p_provider: provider,
+            p_phase: phase,
+            p_status: status,
+            p_message: message,
+          })
+          .then(
+            () => {},
+            () => {},
+          )
+    : null
 
+  // Emit a start + result event per provider so the dashboard renders a live log.
   const providers: Record<string, ProviderSyncEntry> = {}
-  keys.forEach((k, i) => {
-    providers[k] = classifyProvider(results[i])
-  })
+  await Promise.all(
+    keys.map(async (k) => {
+      const label = PROVIDER_LABEL[k] ?? k
+      if (emit) await emit("start", k, null, `Syncing ${product} → ${label}…`)
+      const entry = classifyProvider(await runners[k]())
+      providers[k] = entry
+      if (emit) {
+        const phase = entry.status === "failed" ? "failed" : entry.status === "skipped" ? "skipped" : "ok"
+        await emit(phase, k, entry.status, providerSyncMessage(label, product, entry))
+      }
+    }),
+  )
 
   const values = Object.values(providers)
   const status: ProductSyncSummary["status"] = values.some((v) => v.status === "failed")
@@ -506,6 +593,8 @@ export async function runProductSync(
     p_status: status,
     p_state: providers,
   })
+
+  if (emit) await emit("run_done", null, status, `${product}: ${status}`)
 
   return { status, providers }
 }

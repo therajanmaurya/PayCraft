@@ -1,21 +1,14 @@
 name = "paycraft-docs"
 compatibility_date = "2026-06-17"
-pages_build_output_dir = "build"
 
-# Cloudflare Pages config for the PayCraft docs site —
-# Phase 2 T4 of paycraft-v2-production-readiness.
-#
-# The Pages project is created out-of-band (operational task T5) via:
-#   wrangler pages project create paycraft-docs --production-branch=main
-# After creation, this file pins the production-branch + build-output dir.
-#
-# Branch model:
-#   - `main`       → production deploy → https://docs.paycraft.mobilebytesensei.com
-#   - `development` → preview deploy → https://development.paycraft-docs.pages.dev
-
-[env.production]
-# Reserved for future production env-vars (e.g. analytics tokens).
-# Leave empty — keeps the doc site stateless.
-
-[env.preview]
-# Reserved for preview env-vars.
+# Cloudflare Workers Static Assets. The docs site is a pure static Docusaurus
+# build (no Worker code) served as assets. Cloudflare migrated this project to
+# Workers Builds, whose deploy step runs `wrangler versions upload` (a Workers
+# command). That command needs a Worker entry-point OR an assets directory —
+# the old `pages_build_output_dir = "build"` is a Pages-only field it IGNORES,
+# which produced: "Missing entry-point to Worker script or to assets directory".
+# Pointing `[assets].directory` at the Docusaurus output makes the upload deploy
+# the static site with no Worker script.
+[assets]
+directory = "./build"
+not_found_handling = "404-page"

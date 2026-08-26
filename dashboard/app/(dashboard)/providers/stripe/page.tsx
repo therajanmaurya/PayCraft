@@ -892,6 +892,7 @@ function ManualKeysPanel({
     webhook_secret: "",
   })
   const [showLive, setShowLive] = useState(false)
+  const [accountLabel, setAccountLabel] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -936,6 +937,7 @@ function ManualKeysPanel({
             live_publishable_key: showLive ? live.publishable_key : "",
             live_secret_key: showLive ? live.secret_key : "",
             live_webhook_secret: showLive ? live.webhook_secret : "",
+            account_label: accountLabel,
           }
         : {
             test_publishable_key: test.publishable_key,
@@ -948,6 +950,7 @@ function ManualKeysPanel({
             live_webhook_secret: showLive
               ? live.webhook_secret
               : test.webhook_secret,
+            account_label: accountLabel,
           }
       const res = await fetch("/api/providers/stripe/keys", {
         method: "POST",
@@ -984,6 +987,7 @@ function ManualKeysPanel({
     test.publishable_key ||
     test.secret_key ||
     test.webhook_secret ||
+    accountLabel ||
     (showLive &&
       (live.publishable_key || live.secret_key || live.webhook_secret))
   const canSave = isUpdate ? !!anyTouched : testFilled && liveFilled
@@ -1211,6 +1215,20 @@ function ManualKeysPanel({
             onChange={setTest}
             isUpdate={isUpdate}
           />
+
+          {/* Non-secret account label — shown when reusing this connection across apps. */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-400 block">
+              Account label / email <span className="font-normal normal-case text-ink-400">(optional)</span>
+            </label>
+            <input
+              type="text"
+              className="w-full px-4 py-2.5 bg-ink-50 border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+              placeholder="billing@your-org.com — helps you tell accounts apart"
+              value={accountLabel}
+              onChange={(e) => setAccountLabel(e.target.value)}
+            />
+          </div>
 
           {/* Optional live keys */}
           <div className="pt-2 border-t border-ink-100">

@@ -23,6 +23,7 @@ export function GooglePlayKeysForm({
   const router = useRouter()
   const [saJson, setSaJson] = useState("")
   const [pkg, setPkg] = useState(packageName ?? "")
+  const [accountLabel, setAccountLabel] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -47,6 +48,7 @@ export function GooglePlayKeysForm({
         body: JSON.stringify({
           service_account_json: saJson,
           package_name: pkg,
+          account_label: accountLabel,
         }),
       })
       const data = await res.json()
@@ -90,6 +92,23 @@ export function GooglePlayKeysForm({
           value={pkg}
           onChange={(e) => setPkg(e.target.value)}
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-bold uppercase tracking-wider text-ink-400 block">
+          Account label <span className="font-normal normal-case text-ink-400">(optional)</span>
+        </label>
+        <input
+          type="email"
+          className="w-full px-4 py-2.5 bg-ink-50 border border-ink-200 rounded-lg text-sm focus:outline-none focus:border-brand-500"
+          placeholder="play-console@your-org.iam.gserviceaccount.com"
+          value={accountLabel}
+          onChange={(e) => setAccountLabel(e.target.value)}
+        />
+        <p className="text-[11px] text-ink-500">
+          The service-account email is auto-detected from the JSON. Set a friendly label only to
+          override which account name is shown when reusing this connection across apps.
+        </p>
       </div>
 
       <div className="space-y-1.5">

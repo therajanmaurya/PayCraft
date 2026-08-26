@@ -1,7 +1,7 @@
 [versions]
 agp = "8.12.3"
-kotlin = "2.3.0"
-compose-multiplatform = "1.10.3"
+kotlin = "2.4.0"
+compose-multiplatform = "1.11.0"
 android-minSdk = "24"
 android-compileSdk = "35"
 android-targetSdk = "35"
@@ -14,7 +14,7 @@ ktlint = "1.5.0"
 
 # Testing
 junit = "4.13.2"
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 
 # AndroidX
 androidx-activityCompose = "1.9.3"
@@ -23,10 +23,10 @@ androidx-activityCompose = "1.9.3"
 supabase = "3.1.4"
 ktor = "3.1.1"
 koin = "4.1.0"
-kermit = "2.0.5"
+kermit = "2.1.0"
 kotlinxSerialization = "1.8.1"
 multiplatformSettings = "1.3.0"
-lifecycle = "2.8.3"
+lifecycle = "2.9.6"
 # Store5 read-through cache (offline-correct entitlement gating — D8). SQLDelight is the
 # SourceOfTruth schema-of-record (cmp-paycraft/.../db/Entitlement.sq); its driver + code-gen
 # are wired with the native clients in Phase 3 (see build.gradle.kts note).

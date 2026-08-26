@@ -12,6 +12,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -42,6 +44,11 @@ class PayCraftRealtime(private val supabase: SupabaseClient) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // All channel state is read/written ONLY inside [mutex] — this makes the
+    // check-then-subscribe atomic (no duplicate channel when startRealtime is
+    // called twice per config fetch) and the fields thread-safe across the
+    // Default-dispatcher coroutines + the calling thread (JVM + Kotlin/Native).
+    private val mutex = Mutex()
     private var configChannel: RealtimeChannel? = null
     private var entitlementChannel: RealtimeChannel? = null
     private var configTenant: String? = null
@@ -49,23 +56,25 @@ class PayCraftRealtime(private val supabase: SupabaseClient) {
 
     /** Subscribe to `config:{tenantId}`; invoke [onChanged] on every config ping. */
     fun ensureConfigChannel(tenantId: String, onChanged: () -> Unit) {
-        if (configTenant == tenantId && configChannel != null) return
         scope.launch {
-            runCatching {
-                configChannel?.let { supabase.realtime.removeChannel(it) }
-                val ch = supabase.channel("config:$tenantId")
-                ch.broadcastFlow<JsonObject>(event = "config_changed")
-                    .onEach {
-                        PayCraftLogger.onFlow("realtime", "config ping → refetching /config")
-                        onChanged()
-                    }
-                    .launchIn(scope)
-                ch.subscribe()
-                configChannel = ch
-                configTenant = tenantId
-                PayCraftLogger.onFlow("realtime", "subscribed config:$tenantId")
-            }.onFailure {
-                PayCraftLogger.onFlow("realtime", "config subscribe failed (TTL fallback stays): ${it.message}")
+            mutex.withLock {
+                if (configTenant == tenantId && configChannel != null) return@withLock
+                runCatching {
+                    configChannel?.let { supabase.realtime.removeChannel(it) }
+                    val ch = supabase.channel("config:$tenantId")
+                    ch.broadcastFlow<JsonObject>(event = "config_changed")
+                        .onEach {
+                            PayCraftLogger.onFlow("realtime", "config ping → refetching /config")
+                            onChanged()
+                        }
+                        .launchIn(scope)
+                    ch.subscribe()
+                    configChannel = ch
+                    configTenant = tenantId
+                    PayCraftLogger.onFlow("realtime", "subscribed config:$tenantId")
+                }.onFailure {
+                    PayCraftLogger.onFlow("realtime", "config subscribe failed (TTL fallback stays): ${it.message}")
+                }
             }
         }
     }
@@ -73,23 +82,28 @@ class PayCraftRealtime(private val supabase: SupabaseClient) {
     /** Subscribe to `entitlement:{tenantId}:{appUserId}`; re-subscribes on identity change. */
     fun ensureEntitlementChannel(tenantId: String, appUserId: String, onChanged: () -> Unit) {
         val key = "$tenantId:$appUserId"
-        if (entitlementKey == key && entitlementChannel != null) return
         scope.launch {
-            runCatching {
-                entitlementChannel?.let { supabase.realtime.removeChannel(it) }
-                val ch = supabase.channel("entitlement:$tenantId:$appUserId")
-                ch.broadcastFlow<JsonObject>(event = "entitlement_changed")
-                    .onEach {
-                        PayCraftLogger.onFlow("realtime", "entitlement ping → force refresh")
-                        onChanged()
-                    }
-                    .launchIn(scope)
-                ch.subscribe()
-                entitlementChannel = ch
-                entitlementKey = key
-                PayCraftLogger.onFlow("realtime", "subscribed entitlement:$tenantId:***")
-            }.onFailure {
-                PayCraftLogger.onFlow("realtime", "entitlement subscribe failed (TTL fallback stays): ${it.message}")
+            mutex.withLock {
+                if (entitlementKey == key && entitlementChannel != null) return@withLock
+                runCatching {
+                    entitlementChannel?.let { supabase.realtime.removeChannel(it) }
+                    val ch = supabase.channel("entitlement:$tenantId:$appUserId")
+                    ch.broadcastFlow<JsonObject>(event = "entitlement_changed")
+                        .onEach {
+                            PayCraftLogger.onFlow("realtime", "entitlement ping → force refresh")
+                            onChanged()
+                        }
+                        .launchIn(scope)
+                    ch.subscribe()
+                    entitlementChannel = ch
+                    entitlementKey = key
+                    PayCraftLogger.onFlow("realtime", "subscribed entitlement:$tenantId:***")
+                }.onFailure {
+                    PayCraftLogger.onFlow(
+                        "realtime",
+                        "entitlement subscribe failed (TTL fallback stays): ${it.message}",
+                    )
+                }
             }
         }
     }
@@ -97,12 +111,14 @@ class PayCraftRealtime(private val supabase: SupabaseClient) {
     /** Tear down both channels (call on logout / SDK teardown). */
     fun stop() {
         scope.launch {
-            configChannel?.let { runCatching { supabase.realtime.removeChannel(it) } }
-            entitlementChannel?.let { runCatching { supabase.realtime.removeChannel(it) } }
-            configChannel = null
-            entitlementChannel = null
-            configTenant = null
-            entitlementKey = null
+            mutex.withLock {
+                configChannel?.let { runCatching { supabase.realtime.removeChannel(it) } }
+                entitlementChannel?.let { runCatching { supabase.realtime.removeChannel(it) } }
+                configChannel = null
+                entitlementChannel = null
+                configTenant = null
+                entitlementKey = null
+            }
         }
     }
 }

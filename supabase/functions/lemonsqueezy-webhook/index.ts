@@ -23,8 +23,9 @@ serve(withWebhookRateLimit({ bucket: "webhook:lemonsqueezy" }, async (req) => {
 
   const body = await req.text();
 
-  // Verify HMAC signature
-  if (signingSecret) {
+  // Verify HMAC signature — FAIL CLOSED: unset secret or missing/wrong sig rejected.
+  if (!signingSecret) return new Response("Webhook secret not configured", { status: 500 });
+  {
     const signature = req.headers.get("x-signature") || "";
     const key = new TextEncoder().encode(signingSecret);
     const data = new TextEncoder().encode(body);

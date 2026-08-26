@@ -38,7 +38,7 @@ const groups: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { href: "/dashboard", label: "Home", icon: Home },
+      { href: "/dashboard", label: "Overview", icon: LayoutGrid },
       { href: "/ai", label: "PayCraft AI", icon: Sparkles },
     ],
   },

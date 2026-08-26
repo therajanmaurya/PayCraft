@@ -14,6 +14,12 @@ interface ProductInput {
   interval?: Interval | null
   trial_enabled?: boolean
   trial_duration_days?: number | null
+  /**
+   * Per-platform trial days, e.g. { android: 30, ios: 14, web: 7, desktop: 14 }.
+   * A key PRESENT = trial of N days on that platform; a key ABSENT = no trial there.
+   * null / empty = no per-platform config (legacy trial_duration_days fallback).
+   */
+  trial_per_platform?: Record<string, number> | null
   attaches_to_product_id?: string | null
   base_price_cents: number
   base_currency: string
@@ -31,6 +37,28 @@ interface Subscription {
   base_currency: string
   interval: string
 }
+
+// Preset trial lengths (days). All are Apple-legal introductory-offer durations, so
+// iOS is safe; the same set is valid for Google Play, Stripe, Razorpay & Cashfree.
+const TRIAL_PRESETS: { label: string; days: number }[] = [
+  { label: "3 days", days: 3 },
+  { label: "1 week", days: 7 },
+  { label: "2 weeks", days: 14 },
+  { label: "1 month", days: 30 },
+  { label: "2 months", days: 60 },
+  { label: "3 months", days: 90 },
+  { label: "6 months", days: 180 },
+  { label: "1 year", days: 365 },
+]
+
+// The four platforms an operator can configure independently. android→Google Play,
+// ios→App Store, web+desktop→the shared web PSP (Stripe/Razorpay/Cashfree).
+const TRIAL_PLATFORMS: { key: string; label: string }[] = [
+  { key: "android", label: "Android" },
+  { key: "ios", label: "iOS" },
+  { key: "web", label: "Web" },
+  { key: "desktop", label: "Desktop" },
+]
 
 export function ProductForm({
   initial,
@@ -53,7 +81,7 @@ export function ProductForm({
       const res = await fetch(url, {
         method,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(p),
+        body: JSON.stringify(buildPayload(p)),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -139,45 +167,56 @@ export function ProductForm({
             </label>
           </Field>
           {(p.trial_enabled ?? true) && (
-            <Field label="Trial duration">
+            <Field label="Trial duration per platform">
               <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  {[3, 7, 14, 30].map((days) => {
-                    const active = (p.trial_duration_days ?? 7) === days
-                    return (
-                      <button
-                        key={days}
-                        type="button"
-                        onClick={() => setP({ ...p, trial_duration_days: days })}
-                        className={
-                          "rounded-md border px-3 py-1 text-sm transition-colors " +
-                          (active
-                            ? "border-brand-500 bg-brand-50 text-brand-700 font-medium"
-                            : "border-ink-200 text-ink-600 hover:border-ink-300")
+                {TRIAL_PLATFORMS.map(({ key, label }) => {
+                  const map = p.trial_per_platform ?? {}
+                  const on = key in map
+                  const value = on ? map[key] : 14
+                  function setMap(next: Record<string, number>) {
+                    setP({ ...p, trial_per_platform: next })
+                  }
+                  return (
+                    <div key={key} className="flex items-center gap-3 text-sm">
+                      <label className="flex w-28 items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => {
+                            const next = { ...map }
+                            if (e.target.checked) next[key] = value
+                            else delete next[key]
+                            setMap(next)
+                          }}
+                        />
+                        <span className="font-medium text-ink-700">{label}</span>
+                      </label>
+                      <select
+                        value={on ? String(value) : ""}
+                        disabled={!on}
+                        onChange={(e) =>
+                          setMap({ ...map, [key]: parseInt(e.target.value) })
                         }
+                        className="input w-40 disabled:opacity-40"
                       >
-                        {days}d
-                      </button>
-                    )
-                  })}
-                  <div className="flex items-center gap-1 text-sm">
-                    <input
-                      type="number"
-                      min={1}
-                      max={365}
-                      value={p.trial_duration_days ?? 7}
-                      onChange={(e) =>
-                        setP({ ...p, trial_duration_days: parseInt(e.target.value || "7") })
-                      }
-                      className="input w-20"
-                    />
-                    <span className="text-ink-500">days</span>
-                  </div>
-                </div>
+                        {!on && <option value="">— no trial —</option>}
+                        {TRIAL_PRESETS.map((preset) => (
+                          <option key={preset.days} value={preset.days}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })}
                 <p className="text-xs text-ink-500">
-                  Applies across every connected provider — Google Play &amp; App Store
-                  free-trial offers, Stripe trial period, Razorpay — for new subscribers.
-                  Changes reflect in the app in realtime.
+                  Web &amp; desktop share one web-checkout trial (Stripe/Razorpay/Cashfree).
+                </p>
+                <p className="text-xs text-ink-500">
+                  Each platform&apos;s trial is stored and synced to that platform&apos;s
+                  provider — Android → Google Play, iOS → App Store, Web/Desktop → the web
+                  PSP. A platform left unchecked gets no free trial. Changes reflect in the
+                  app in realtime.
                 </p>
               </div>
             </Field>
@@ -311,6 +350,25 @@ export function ProductForm({
       `}</style>
     </form>
   )
+}
+
+/**
+ * Shape the outgoing product payload. For subscriptions, the per-platform trial map
+ * is only sent when the master "Offer a free trial" toggle is ON (otherwise null, so a
+ * stale map can never keep syncing trials the operator turned off). A legacy
+ * `trial_duration_days` is set to the iOS value (or the first present platform) so
+ * older consumers of that single field keep working.
+ */
+function buildPayload(p: ProductInput): ProductInput {
+  if (p.type !== "subscription") return p
+  const map = p.trial_enabled ? (p.trial_per_platform ?? {}) : null
+  const hasKeys = map && Object.keys(map).length > 0
+  const legacy = hasKeys ? (map!.ios ?? Object.values(map!)[0] ?? null) : null
+  return {
+    ...p,
+    trial_per_platform: hasKeys ? map : null,
+    trial_duration_days: legacy ?? p.trial_duration_days ?? null,
+  }
 }
 
 function PriceFields({

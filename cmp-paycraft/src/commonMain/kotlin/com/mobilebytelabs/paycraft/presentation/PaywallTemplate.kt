@@ -53,18 +53,13 @@ enum class PaywallTemplate {
     ;
 
     @Composable
+    @Suppress("DEPRECATION") // MINIMAL/PREMIUM/DARK are deprecated but still routed during the 90-day grace
     fun render(state: BillingState, products: List<Product>, onPickProduct: (Product) -> Unit, onRetry: () -> Unit) {
         when (this) {
             BRANDED_STACK -> BrandedStackTemplate(state, products, onPickProduct, onRetry)
-            @Suppress("DEPRECATION")
-            MINIMAL,
-            -> MinimalTemplate(state, products, onPickProduct, onRetry)
-            @Suppress("DEPRECATION")
-            PREMIUM,
-            -> PremiumTemplate(state, products, onPickProduct, onRetry)
-            @Suppress("DEPRECATION")
-            DARK,
-            -> DarkTemplate(state, products, onPickProduct, onRetry)
+            MINIMAL -> MinimalTemplate(state, products, onPickProduct, onRetry)
+            PREMIUM -> PremiumTemplate(state, products, onPickProduct, onRetry)
+            DARK -> DarkTemplate(state, products, onPickProduct, onRetry)
         }
     }
 

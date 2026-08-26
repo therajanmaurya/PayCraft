@@ -24,8 +24,10 @@ serve(withWebhookRateLimit({ bucket: "webhook:paystack" }, async (req) => {
 
   const body = await req.text();
 
-  // Verify HMAC-SHA512 signature
-  if (secretKey) {
+  // Verify HMAC-SHA512 signature — FAIL CLOSED: an unset secret or a
+  // missing/wrong signature (empty header mismatches the computed HMAC) is rejected.
+  if (!secretKey) return new Response("Webhook secret not configured", { status: 500 });
+  {
     const signature = req.headers.get("x-paystack-signature") || "";
     const key = new TextEncoder().encode(secretKey);
     const data = new TextEncoder().encode(body);

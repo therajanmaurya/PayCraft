@@ -160,6 +160,33 @@ object PayCraft {
     val paywallPresentation: StateFlow<PaywallPresentation> = _paywallPresentation.asStateFlow()
 
     /**
+     * The [BillingManager] — the entry point for HEADLESS integration (mode 2).
+     * Instead of the drop-in [com.mobilebytelabs.paycraft.ui.PayCraftPaywall], observe
+     * [BillingManager.billingState] / [BillingManager.isPremium] / [BillingManager.isInTrial]
+     * and drive [checkout] from your OWN UI:
+     *
+     * ```kotlin
+     * val state by PayCraft.billingManager!!.billingState.collectAsState()
+     * when (state) {
+     *     is BillingState.Free    -> UpgradeButton { PayCraft.checkout(plan) }
+     *     is BillingState.Premium -> PremiumContent()
+     *     else                    -> Loading()
+     * }
+     * ```
+     * Null until [initialize] has run (the Koin graph isn't up yet).
+     */
+    val billingManager: BillingManager?
+        get() = KoinPlatform.getKoinOrNull()?.getOrNull<BillingManager>()
+
+    /**
+     * The purchasable plans for HEADLESS integration (mode 2) — rebuilt from the
+     * dashboard config + resolved native-store prices. Empty until the first
+     * SuiteConfig fetch resolves (collect [suiteConfigFlow] to recompose when it
+     * lands). Pass one of these to [checkout].
+     */
+    val plans: List<BillingPlan> get() = config?.plans ?: emptyList()
+
+    /**
      * The native store's OWN localized price per plan sku (Play `formattedPrice` / StoreKit
      * `displayPrice`), resolved after products load on native billing lanes. When present it is
      * the truth the store charges and OVERRIDES the cloud `/config` price for the paywall + the
@@ -539,6 +566,23 @@ object PayCraft {
         realtime.ensureConfigChannel(tenantId) {
             configFetchJob = applicationScope.launch { runCatching { prefetchProducts() } }
         }
+        refreshRealtimeIdentity()
+    }
+
+    /**
+     * (Re)bind the realtime ENTITLEMENT channel to the CURRENT buyer identity
+     * (`email ?: deviceId`). Called on every config apply AND by [BillingManager]
+     * whenever the identity changes — login (device-id → email) and logout
+     * (email → device-id) — so an entitlement push always reaches the buyer's
+     * channel. The realtime client removes the prior channel before subscribing
+     * the new one, so the old user's pings stop after logout. No-op until a
+     * SuiteConfig (hence tenant_id) has landed. Best-effort; failures leave the
+     * TTL/foreground sync as the fallback.
+     */
+    internal fun refreshRealtimeIdentity() {
+        val tenantId = suiteConfig?.tenantId ?: return
+        val koin = KoinPlatform.getKoinOrNull() ?: return
+        val realtime = koin.getOrNull<PayCraftRealtime>() ?: return
         applicationScope.launch {
             val email = runCatching { koin.getOrNull<PayCraftStore>()?.getEmail() }.getOrNull()
             val appUserId = email?.trim()?.lowercase()?.ifBlank { null } ?: deviceId

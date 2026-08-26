@@ -18,14 +18,17 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServerSupabase()
+  // SECURITY: getUser() revalidates the JWT against the Auth server on every call.
+  // getSession() only decodes the cookie without revalidation and must NOT gate a
+  // mutating/authorization decision (Supabase SSR guidance).
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  if (!session) {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
     return NextResponse.json({ error: "not signed in" }, { status: 401 })
   }
-  const userId = session.user.id
-  const email = session.user.email!
+  const userId = user.id
+  const email = user.email!
 
   // Use the service-role client to bypass RLS for tenant insert
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {

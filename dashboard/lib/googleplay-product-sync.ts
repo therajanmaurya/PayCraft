@@ -71,6 +71,14 @@ export interface GooglePlaySyncResult {
   trialOfferActivated?: boolean
   /** Human-readable reason the trial offer is not active (present iff a trial was requested but not active). */
   trialOfferError?: string
+  /**
+   * Whether a previously-existing free-trial offer was DEACTIVATED (or was already
+   * inactive/absent) on a DISABLE-trial sync (trialDays === 0). Set only in the
+   * no-trial branch — the mirror of trialOfferActivated. Without this cleanup a
+   * stale FREE_TRIAL offer would linger on the store after the trial is turned off,
+   * so the Play cart keeps granting a trial the paywall no longer advertises.
+   */
+  trialOfferDeactivated?: boolean
 }
 
 // Minimal ISO-4217 currency → CLDR region map for the common PayCraft set.
@@ -295,6 +303,61 @@ async function ensureFreeTrialOffer(
   }
 }
 
+/**
+ * Ensure NO active FREE_TRIAL offer lingers on the base plan when the product's
+ * trial is turned OFF (trialDays === 0). The mirror of [ensureFreeTrialOffer]:
+ * probes the deterministic `{basePlanId}-freetrial` offer and, if it EXISTS and is
+ * still ACTIVE, :deactivate's it. DEACTIVATE (not delete) is deliberate — it is
+ * reversible (a later re-enable :activate's the same offer, phases intact) and
+ * safer than an irreversible delete. Idempotent: an absent offer (404) is a no-op,
+ * and an already-inactive (DRAFT/CANCELLED) offer is a no-op. Best-effort, like
+ * every other Play write here — a cleanup failure warns and returns a reason
+ * rather than throwing and aborting the whole product sync.
+ */
+async function ensureNoFreeTrialOffer(
+  token: string,
+  pkg: string,
+  productId: string,
+  basePlanId: string,
+): Promise<{ deactivated: boolean; error?: string }> {
+  const offerId = freeTrialOfferIdFor(basePlanId)
+  const offersBase =
+    `/applications/${pkg}/subscriptions/${encodeURIComponent(productId)}` +
+    `/basePlans/${encodeURIComponent(basePlanId)}/offers`
+
+  // Probe — does the offer exist at all? Absent → nothing to clean up.
+  const getRes = await playFetch(token, `${offersBase}/${encodeURIComponent(offerId)}`)
+  if (getRes.status === 404) return { deactivated: false }
+  if (!getRes.ok) {
+    const err = `offers.get failed (${getRes.status}): ${shortPlayError(await getRes.text())}`
+    console.warn(`[googleplay-product-sync] free-trial cleanup: ${err}`)
+    return { deactivated: false, error: err }
+  }
+
+  // Only an ACTIVE offer is purchasable and needs deactivating. A DRAFT or
+  // CANCELLED offer is already non-purchasable → treat as a no-op success.
+  let state: string | undefined
+  try {
+    state = (await getRes.json())?.state
+  } catch {
+    /* fall through — attempt deactivate defensively below */
+  }
+  if (state && state !== "ACTIVE") return { deactivated: true }
+
+  const deRes = await playFetch(
+    token,
+    `${offersBase}/${encodeURIComponent(offerId)}:deactivate`,
+    { method: "POST", body: JSON.stringify({ packageName: pkg, productId, basePlanId, offerId }) },
+  )
+  if (deRes.ok) return { deactivated: true }
+  const deBody = await deRes.text()
+  // Already inactive / not active → the goal state is already met.
+  if (/not active|already (inactive|cancelled|canceled)/i.test(deBody)) return { deactivated: true }
+  const err = `free-trial offer not deactivated (${deRes.status}): ${shortPlayError(deBody)}`
+  console.warn(`[googleplay-product-sync] free-trial cleanup: ${err}`)
+  return { deactivated: false, error: err }
+}
+
 export async function syncProductToGooglePlay(
   creds: GooglePlayCreds,
   paycraftProductId: string, // for logging correlation only
@@ -321,7 +384,17 @@ export async function syncProductToGooglePlay(
   // branches so re-syncing an existing subscription can add a newly-configured
   // trial. No-trial products get an explicit null so the caller can detect it.
   const withTrial = async (base: GooglePlaySyncResult): Promise<GooglePlaySyncResult> => {
-    if (!wantsTrial) return { ...base, freeTrialOfferId: null }
+    if (!wantsTrial) {
+      // Trial DISABLED → tear down any stale free-trial offer so the store stops
+      // granting a trial the paywall no longer advertises (deactivate, reversible).
+      const off = await ensureNoFreeTrialOffer(token, pkg, productId, basePlanId)
+      return {
+        ...base,
+        freeTrialOfferId: null,
+        trialOfferDeactivated: off.deactivated,
+        trialOfferError: off.error,
+      }
+    }
     const t = await ensureFreeTrialOffer(token, pkg, productId, basePlanId, trialDays as number, regions)
     return {
       ...base,
