@@ -219,6 +219,10 @@ class PayCraftBillingManager(
         misconfiguredError: String,
         register: (suspend (purchase: NativePurchase, productId: String, appUserId: String) -> EntitlementDto?)?,
     ) {
+        // A lifetime plan is a ONE_TIME product on Play; everything else is a subscription. Without
+        // this the store lookup asked for a SUBS product that does not exist and the purchase
+        // failed with "Product not found".
+        val productType = plan.nativeProductType
         val native = nativeBillingClient
         if (native == null) {
             // No native client wired (e.g. the platform billing module not loaded). Fail CLOSED with
@@ -248,7 +252,7 @@ class PayCraftBillingManager(
 
         _billingState.value = BillingState.Loading
         scope.launch {
-            when (val result = native.purchase(productId, appUserId)) {
+            when (val result = native.purchase(productId, appUserId, productType)) {
                 is NativePurchaseResult.Success -> {
                     val purchase = result.purchase
                     PayCraftLogger.onFlow(tag, "$storeLabel purchase OK (product=$productId)")

@@ -91,8 +91,11 @@ class SpyNativeBillingClient : NativeBillingClient {
     override val purchaseUpdates: kotlinx.coroutines.flow.Flow<NativePurchase> =
         kotlinx.coroutines.flow.emptyFlow()
 
-    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult =
-        NativePurchaseResult.Cancelled
+    override suspend fun purchase(
+        productId: String,
+        appUserId: String?,
+        productType: com.mobilebytelabs.paycraft.billing.NativeProductType,
+    ): NativePurchaseResult = NativePurchaseResult.Cancelled
 
     override suspend fun finishPurchase(purchase: NativePurchase) {
         finishCalls++
@@ -112,7 +115,10 @@ class SpyNativeBillingClient : NativeBillingClient {
     }
 
     override suspend fun storefrontCountry(): String? = null
-    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
+    override suspend fun nativeDisplayPrice(
+        productId: String,
+        productType: com.mobilebytelabs.paycraft.billing.NativeProductType,
+    ): NativeDisplayPrice? = null
 }
 
 /** Build a wire [EntitlementDto] (epoch-millis timestamps) for tests. */

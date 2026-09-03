@@ -40,7 +40,11 @@ class PurchaseLoopTest {
 
         suspend fun emitOutOfBand(purchase: NativePurchase) = updates.emit(purchase)
 
-        override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult {
+        override suspend fun purchase(
+            productId: String,
+            appUserId: String?,
+            productType: NativeProductType,
+        ): NativePurchaseResult {
             purchasedWithIdentity += productId to appUserId
             return outcome(productId)
         }
@@ -54,7 +58,10 @@ class PurchaseLoopTest {
         override suspend fun restore(): List<NativePurchase> = queryResult
         override suspend fun manageSubscription(productId: String?) = Unit
         override suspend fun storefrontCountry(): String? = null
-        override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
+        override suspend fun nativeDisplayPrice(
+            productId: String,
+            productType: NativeProductType,
+        ): NativeDisplayPrice? = null
     }
 
     private fun purchase(

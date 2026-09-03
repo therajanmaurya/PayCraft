@@ -23,6 +23,7 @@ import com.android.billingclient.api.acknowledgePurchase
 import com.android.billingclient.api.queryProductDetails
 import com.android.billingclient.api.queryPurchasesAsync
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -103,31 +104,63 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         .setListener(purchasesListener)
         .build()
 
-    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult {
+    override suspend fun purchase(
+        productId: String,
+        appUserId: String?,
+        productType: NativeProductType,
+    ): NativePurchaseResult {
         val connect = ensureConnected()
         if (connect.responseCode != BillingResponseCode.OK) {
             return NativePurchaseResult.Failed("Play billing connect failed: ${connect.debugMessage}")
         }
-        val productDetails = queryProductDetails(productId)
+        val productDetails = queryProductDetails(productId, productType)
             ?: return NativePurchaseResult.Failed("Product not found on Play: $productId")
-        val offerToken = productDetails.subscriptionOfferDetails?.firstOrNull()?.offerToken
-            ?: return NativePurchaseResult.Failed("No subscription offer for $productId")
         val activity = activityProvider()
             ?: return NativePurchaseResult.Failed("No foreground Activity to launch the billing flow")
 
+        val detailsParams = BillingFlowParams.ProductDetailsParams.newBuilder()
+            .setProductDetails(productDetails)
+        if (productType == NativeProductType.SUBSCRIPTION) {
+            // Pick the BEST eligible offer rather than whichever Play listed first. Play returns
+            // base plan + trial + intro + developer offers in a meaningless order, so
+            // `firstOrNull()` made a configured free trial apply or not by chance.
+            val offers = productDetails.toNativeOffers()
+            val best = selectBestOffer(offers)
+                ?: return NativePurchaseResult.Failed("No subscription offer for $productId")
+            detailsParams.setOfferToken(best.offerToken)
+            Logger.d("PlayBillingNativeClient") {
+                "offer selected for $productId: id=${best.offerId} trialDays=${best.freeTrialDays}"
+            }
+        }
+
         val flowParams = BillingFlowParams.newBuilder()
-            .setProductDetailsParamsList(
-                listOf(
-                    BillingFlowParams.ProductDetailsParams.newBuilder()
-                        .setProductDetails(productDetails)
-                        .setOfferToken(offerToken)
-                        .build(),
-                ),
-            )
+            .setProductDetailsParamsList(listOf(detailsParams.build()))
             .apply {
                 // Bind the receipt to the app user so the server can attribute it. Play requires
                 // this to be non-identifying, so a hash — never the raw email — goes on the wire.
                 appUserId?.let { setObfuscatedAccountId(obfuscate(it)) }
+
+                // Plan change (PB-6): an existing active subscription means this is an UPGRADE or
+                // DOWNGRADE, not a new purchase. Without update params Play either errors or leaves
+                // the buyer paying for two subscriptions at once.
+                if (productType == NativeProductType.SUBSCRIPTION) {
+                    activeSubscriptionToken(exceptProductId = productId)?.let { oldToken ->
+                        setSubscriptionUpdateParams(
+                            BillingFlowParams.SubscriptionUpdateParams.newBuilder()
+                                .setOldPurchaseToken(oldToken)
+                                // CHARGE_PRORATED_PRICE: the buyer is charged the difference now
+                                // and the renewal date is preserved. The safe default for an
+                                // upgrade; Play refuses it for a downgrade, which then surfaces as
+                                // a normal billing error rather than a silent double-charge.
+                                .setSubscriptionReplacementMode(
+                                    BillingFlowParams.SubscriptionUpdateParams
+                                        .ReplacementMode.CHARGE_PRORATED_PRICE,
+                                )
+                                .build(),
+                        )
+                        Logger.d("PlayBillingNativeClient") { "plan change: replacing existing subscription" }
+                    }
+                }
             }
             .build()
 
@@ -195,8 +228,16 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
 
     override suspend fun queryPurchases(): List<NativePurchase> {
         ensureConnected()
+        // BOTH product types. Every query used to hardcode SUBS, so a lifetime/one-time purchase
+        // was invisible to restore AND to the unacknowledged-purchase sweep — meaning Play would
+        // auto-refund it after 72h and nothing would notice.
+        return queryPurchasesOf(BillingClient.ProductType.SUBS) +
+            queryPurchasesOf(BillingClient.ProductType.INAPP)
+    }
+
+    private suspend fun queryPurchasesOf(playType: String): List<NativePurchase> {
         val params = QueryPurchasesParams.newBuilder()
-            .setProductType(BillingClient.ProductType.SUBS)
+            .setProductType(playType)
             .build()
         val result = billingClient.queryPurchasesAsync(params)
         // PENDING purchases are RETAINED (flagged via NativePurchase.isPending) rather than
@@ -261,32 +302,38 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
      * offer (`formattedPrice` / `priceCurrencyCode` / `priceAmountMicros`). Null when the product
      * is not on Play, has no offer, or any field is missing.
      */
-    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? {
+    override suspend fun nativeDisplayPrice(productId: String, productType: NativeProductType): NativeDisplayPrice? {
         val connect = ensureConnected()
         if (connect.responseCode != BillingResponseCode.OK) return null
-        val productDetails = queryProductDetails(productId) ?: return null
-        val phase = productDetails.subscriptionOfferDetails
-            ?.firstOrNull()
-            ?.pricingPhases
-            ?.pricingPhaseList
-            ?.firstOrNull()
-            ?: return null
-        val currency = phase.priceCurrencyCode?.takeIf { it.isNotBlank() } ?: return null
-        val formatted = phase.formattedPrice?.takeIf { it.isNotBlank() } ?: return null
+        val productDetails = queryProductDetails(productId, productType) ?: return null
+
+        if (productType == NativeProductType.ONE_TIME) {
+            val offer = productDetails.oneTimePurchaseOfferDetails ?: return null
+            val currency = offer.priceCurrencyCode?.takeIf { it.isNotBlank() } ?: return null
+            val formatted = offer.formattedPrice?.takeIf { it.isNotBlank() } ?: return null
+            return NativeDisplayPrice(formatted, currency, offer.priceAmountMicros)
+        }
+
+        // Advertise the price of the offer we will ACTUALLY purchase, and specifically its
+        // recurring phase — quoting a free trial phase would display the price as "Free".
+        val best = selectBestOffer(productDetails.toNativeOffers()) ?: return null
+        val phase = best.recurringPhase ?: return null
+        if (phase.currencyCode.isBlank() || phase.formattedPrice.isBlank()) return null
         return NativeDisplayPrice(
-            formatted = formatted,
-            currencyCode = currency,
+            formatted = phase.formattedPrice,
+            currencyCode = phase.currencyCode,
             amountMicros = phase.priceAmountMicros,
         )
     }
 
-    private suspend fun queryProductDetails(productId: String): ProductDetails? {
+    private suspend fun queryProductDetails(productId: String, productType: NativeProductType): ProductDetails? {
+        val playType = productType.toPlayType()
         val params = QueryProductDetailsParams.newBuilder()
             .setProductList(
                 listOf(
                     QueryProductDetailsParams.Product.newBuilder()
                         .setProductId(productId)
-                        .setProductType(BillingClient.ProductType.SUBS)
+                        .setProductType(playType)
                         .build(),
                 ),
             )
@@ -295,22 +342,96 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         return result.productDetailsList?.firstOrNull()
     }
 
-    /** Idempotent, serialized connect — no-op when the client is already ready. */
-    private suspend fun ensureConnected(): BillingResult = connectMutex.withLock {
-        if (billingClient.isReady) return@withLock okResult()
-        suspendCancellableCoroutine { cont ->
-            billingClient.startConnection(
-                object : BillingClientStateListener {
-                    override fun onBillingSetupFinished(billingResult: BillingResult) {
-                        if (cont.isActive) cont.resume(billingResult)
-                    }
-
-                    // Next ensureConnected() reconnects lazily via the isReady guard above.
-                    override fun onBillingServiceDisconnected() = Unit
-                },
-            )
-        }
+    /** Play `ProductDetails` → the device-free offer shape [selectBestOffer] ranks. */
+    private fun ProductDetails.toNativeOffers(): List<NativeOffer> = subscriptionOfferDetails.orEmpty().map { offer ->
+        NativeOffer(
+            offerToken = offer.offerToken,
+            offerId = offer.offerId,
+            pricingPhases = offer.pricingPhases.pricingPhaseList.map { phase ->
+                NativePricingPhase(
+                    priceAmountMicros = phase.priceAmountMicros,
+                    formattedPrice = phase.formattedPrice.orEmpty(),
+                    currencyCode = phase.priceCurrencyCode.orEmpty(),
+                    billingPeriodIso = phase.billingPeriod.orEmpty(),
+                    billingCycleCount = phase.billingCycleCount,
+                )
+            },
+        )
     }
+
+    /**
+     * The purchase token of an existing active subscription other than [exceptProductId] — the
+     * "old" side of a plan change. Null when the buyer has no subscription to replace.
+     */
+    private suspend fun activeSubscriptionToken(exceptProductId: String): String? =
+        runCatching { queryPurchasesOf(BillingClient.ProductType.SUBS) }
+            .getOrDefault(emptyList())
+            .firstOrNull { !it.isPending && it.productId.isNotBlank() && it.productId != exceptProductId }
+            ?.purchaseToken
+
+    private fun NativeProductType.toPlayType(): String = when (this) {
+        NativeProductType.SUBSCRIPTION -> BillingClient.ProductType.SUBS
+        NativeProductType.ONE_TIME -> BillingClient.ProductType.INAPP
+    }
+
+    /**
+     * Idempotent, serialized connect with bounded exponential backoff.
+     *
+     * The old version made exactly one attempt and relied on the next lazy call to retry, with no
+     * delay. A Play Store update or a transient bind failure therefore surfaced as a hard failure
+     * on the first post-disconnect call — the buyer saw "connect failed" and had to tap again.
+     */
+    private suspend fun ensureConnected(): BillingResult = connectMutex.withLock {
+        if (closed) {
+            return@withLock BillingResult.newBuilder()
+                .setResponseCode(BillingResponseCode.SERVICE_DISCONNECTED)
+                .setDebugMessage("PayCraft billing client is closed")
+                .build()
+        }
+        if (billingClient.isReady) return@withLock okResult()
+
+        var attempt = 0
+        var last: BillingResult = okResult()
+        while (attempt < MAX_CONNECT_ATTEMPTS) {
+            last = connectOnce()
+            if (last.responseCode == BillingResponseCode.OK || billingClient.isReady) {
+                return@withLock last
+            }
+            attempt++
+            if (attempt < MAX_CONNECT_ATTEMPTS) {
+                delay(CONNECT_BACKOFF_BASE_MS shl (attempt - 1))
+            }
+        }
+        Logger.w("PlayBillingNativeClient") {
+            "Play billing connect failed after $attempt attempts: ${last.debugMessage}"
+        }
+        last
+    }
+
+    private suspend fun connectOnce(): BillingResult = suspendCancellableCoroutine { cont ->
+        billingClient.startConnection(
+            object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    if (cont.isActive) cont.resume(billingResult)
+                }
+
+                // Next ensureConnected() reconnects lazily via the isReady guard above.
+                override fun onBillingServiceDisconnected() = Unit
+            },
+        )
+    }
+
+    /**
+     * Release the Play connection. Call on SDK teardown — [BillingClient] holds a live service
+     * binding, which was never released for the process lifetime.
+     */
+    fun close() {
+        closed = true
+        runCatching { billingClient.endConnection() }
+    }
+
+    @Volatile
+    private var closed = false
 
     private fun okResult(): BillingResult = BillingResult.newBuilder().setResponseCode(BillingResponseCode.OK).build()
 
@@ -334,6 +455,10 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
          * recoverable error instead of a permanently spinning paywall.
          */
         const val PURCHASE_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000L
+
+        /** Connect attempts before giving up, with a doubling delay between each. */
+        const val MAX_CONNECT_ATTEMPTS = 3
+        const val CONNECT_BACKOFF_BASE_MS = 500L
 
         /**
          * Play requires `obfuscatedAccountId` to be non-identifying and caps it at 64 chars, so the

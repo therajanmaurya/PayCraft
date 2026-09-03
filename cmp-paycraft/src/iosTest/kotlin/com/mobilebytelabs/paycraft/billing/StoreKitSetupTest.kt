@@ -29,6 +29,7 @@ class StoreKitSetupTest {
         override suspend fun showManageSubscriptions() = Unit
         override suspend fun storefrontCountry(): String? = "US"
         override suspend fun displayPrice(productId: String): StoreKit2Price? = null
+        override suspend fun introOffer(productId: String): StoreKit2IntroOffer? = null
     }
 
     // ── SK-1: never null, and the un-set-up path is diagnosable ───────────────

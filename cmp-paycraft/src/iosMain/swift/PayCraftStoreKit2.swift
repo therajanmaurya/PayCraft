@@ -229,6 +229,66 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
         }
     }
 
+    // MARK: introOffer(productId:) -> StoreKit2IntroOffer?
+
+    /// Resolves the introductory offer AND this Apple ID's eligibility for it.
+    ///
+    /// `isEligibleForIntroOffer` is per-account and only Apple knows it — an Apple ID that already
+    /// consumed the intro offer for this subscription group is not eligible again.
+    public func introOffer(
+        productId: String,
+        completionHandler: @escaping (StoreKit2IntroOffer?, Error?) -> Void
+    ) {
+        Task {
+            do {
+                let products = try await Product.products(for: [productId])
+                guard let product = products.first,
+                      let subscription = product.subscription,
+                      let intro = subscription.introductoryOffer else {
+                    completionHandler(nil, nil)
+                    return
+                }
+                let eligible = await subscription.isEligibleForIntroOffer
+                let days: Int32
+                switch intro.paymentMode {
+                case .freeTrial: days = Int32(self.days(in: intro.period))
+                default:         days = 0
+                }
+                completionHandler(
+                    StoreKit2IntroOffer(
+                        isEligible: eligible,
+                        freeTrialDays: days,
+                        displayPrice: intro.displayPrice,
+                        periodIso: self.iso(intro.period)
+                    ),
+                    nil
+                )
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
+    private func days(in period: Product.SubscriptionPeriod) -> Int {
+        switch period.unit {
+        case .day:   return period.value
+        case .week:  return period.value * 7
+        case .month: return period.value * 30
+        case .year:  return period.value * 365
+        @unknown default: return 0
+        }
+    }
+
+    private func iso(_ period: Product.SubscriptionPeriod) -> String {
+        switch period.unit {
+        case .day:   return "P\(period.value)D"
+        case .week:  return "P\(period.value)W"
+        case .month: return "P\(period.value)M"
+        case .year:  return "P\(period.value)Y"
+        @unknown default: return ""
+        }
+    }
+
     // MARK: - Helpers
 
     private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {

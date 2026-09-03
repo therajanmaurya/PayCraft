@@ -43,7 +43,12 @@ class StoreKit2NativeBillingClient(private val bridge: StoreKit2Bridge) : Native
         }
     }
 
-    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult =
+    override suspend fun purchase(
+        productId: String,
+        appUserId: String?,
+        productType: NativeProductType,
+    ): NativePurchaseResult = // StoreKit resolves the product type from the product itself, so no branch is needed here
+        // the way Play needs SUBS vs INAPP up front.
         when (val outcome = bridge.purchase(productId, appUserId?.let(::appAccountToken))) {
             is StoreKit2Outcome.Success -> NativePurchaseResult.Success(outcome.transaction.toNativePurchase())
             StoreKit2Outcome.Cancelled -> NativePurchaseResult.Cancelled
@@ -96,7 +101,7 @@ class StoreKit2NativeBillingClient(private val bridge: StoreKit2Bridge) : Native
 
     override suspend fun storefrontCountry(): String? = bridge.storefrontCountry()
 
-    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? =
+    override suspend fun nativeDisplayPrice(productId: String, productType: NativeProductType): NativeDisplayPrice? =
         bridge.displayPrice(productId)?.let {
             NativeDisplayPrice(formatted = it.formatted, currencyCode = it.currencyCode, amountMicros = it.amountMicros)
         }

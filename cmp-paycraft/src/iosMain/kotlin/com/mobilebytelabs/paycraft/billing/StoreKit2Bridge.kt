@@ -66,7 +66,35 @@ interface StoreKit2Bridge {
      * Null when the product is unavailable in the current storefront.
      */
     suspend fun displayPrice(productId: String): StoreKit2Price?
+
+    /**
+     * `Product.SubscriptionInfo.isEligibleForIntroOffer` for THIS Apple ID, plus the offer's terms.
+     *
+     * Eligibility is per-account and Apple is the only source of truth for it: an Apple ID that
+     * already used the introductory offer for a subscription group is not eligible again. Without
+     * this the paywall could only guess — so trial copy was either shown to ineligible buyers
+     * (who then saw a charge they were not expecting) or withheld from eligible ones (losing the
+     * conversion the trial was configured for).
+     *
+     * Null when the product has no introductory offer, or when eligibility cannot be resolved.
+     */
+    suspend fun introOffer(productId: String): StoreKit2IntroOffer?
 }
+
+/**
+ * An introductory offer and whether the signed-in Apple ID can actually use it.
+ *
+ * @param isEligible Apple's own per-account answer. NEVER inferred locally.
+ * @param freeTrialDays days of free trial, or 0 when the offer is a discounted intro price.
+ * @param displayPrice store-formatted price charged during the intro period ("Free" / "₹99").
+ * @param periodIso ISO-8601 duration of the intro period (`P1W`, `P1M`).
+ */
+data class StoreKit2IntroOffer(
+    val isEligible: Boolean,
+    val freeTrialDays: Int,
+    val displayPrice: String,
+    val periodIso: String,
+)
 
 /**
  * One StoreKit2 `Product`'s localized price, flattened to device-free primitives so `commonMain`

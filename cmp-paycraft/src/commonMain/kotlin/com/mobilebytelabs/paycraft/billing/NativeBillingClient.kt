@@ -119,7 +119,11 @@ interface NativeBillingClient {
      *   way to bind a store receipt to an app user, which is what cross-device restore, multi-account
      *   detection and fraud checks all rest on. Null only when no identity is resolvable yet.
      */
-    suspend fun purchase(productId: String, appUserId: String? = null): NativePurchaseResult
+    suspend fun purchase(
+        productId: String,
+        appUserId: String? = null,
+        productType: NativeProductType = NativeProductType.SUBSCRIPTION,
+    ): NativePurchaseResult
 
     /**
      * Durably record [purchase] with the store — Play `acknowledgePurchase`, StoreKit
@@ -133,7 +137,12 @@ interface NativeBillingClient {
      */
     suspend fun finishPurchase(purchase: NativePurchase)
 
-    /** Current store-side purchases for the signed-in store account (no network re-link). */
+    /**
+     * Current store-side purchases for the signed-in store account (no network re-link).
+     *
+     * Covers BOTH product types. Every query used to hardcode Play's `SUBS`, so a one-time /
+     * lifetime purchase was invisible to restore and to the unfinished-purchase sweep.
+     */
     suspend fun queryPurchases(): List<NativePurchase>
 
     /**
@@ -168,7 +177,10 @@ interface NativeBillingClient {
      * so the paywall shows exactly what the store will charge (e.g. ₹799 from the IN storefront).
      * Null when the product/price is unavailable on this store.
      */
-    suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice?
+    suspend fun nativeDisplayPrice(
+        productId: String,
+        productType: NativeProductType = NativeProductType.SUBSCRIPTION,
+    ): NativeDisplayPrice?
 }
 
 /**
@@ -185,8 +197,11 @@ class WebCheckoutNativeBillingClient : NativeBillingClient {
 
     // intentional-noop: no native store exists on web-checkout platforms (D13); purchase is
     // impossible here, callers route to web checkout instead.
-    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult =
-        NativePurchaseResult.Failed("No native store on this platform — use web checkout")
+    override suspend fun purchase(
+        productId: String,
+        appUserId: String?,
+        productType: NativeProductType,
+    ): NativePurchaseResult = NativePurchaseResult.Failed("No native store on this platform — use web checkout")
 
     // intentional-noop: no native store → nothing to acknowledge or finish.
     override suspend fun finishPurchase(purchase: NativePurchase) = Unit
@@ -208,5 +223,6 @@ class WebCheckoutNativeBillingClient : NativeBillingClient {
     override suspend fun storefrontCountry(): String? = null
 
     // intentional-noop: no native store → no store-localized price; the cloud /config price is used.
-    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
+    override suspend fun nativeDisplayPrice(productId: String, productType: NativeProductType): NativeDisplayPrice? =
+        null
 }

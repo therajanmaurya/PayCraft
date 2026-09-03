@@ -175,7 +175,11 @@ class PayCraftBillingManagerTest {
         var purchaseCalled = false
         override val purchaseUpdates: kotlinx.coroutines.flow.Flow<NativePurchase> =
             kotlinx.coroutines.flow.emptyFlow()
-        override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult {
+        override suspend fun purchase(
+            productId: String,
+            appUserId: String?,
+            productType: com.mobilebytelabs.paycraft.billing.NativeProductType,
+        ): NativePurchaseResult {
             purchaseCalled = true
             return NativePurchaseResult.Failed("not exercised in this test")
         }
@@ -185,7 +189,10 @@ class PayCraftBillingManagerTest {
         override suspend fun restore(): List<NativePurchase> = emptyList()
         override suspend fun manageSubscription(productId: String?) = Unit
         override suspend fun storefrontCountry(): String? = null
-        override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
+        override suspend fun nativeDisplayPrice(
+            productId: String,
+            productType: com.mobilebytelabs.paycraft.billing.NativeProductType,
+        ): NativeDisplayPrice? = null
     }
 
     private fun digitalPlan(

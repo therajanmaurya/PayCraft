@@ -71,8 +71,11 @@ internal class UnconfiguredStoreKitClient : NativeBillingClient {
 
     override val purchaseUpdates: Flow<NativePurchase> = emptyFlow()
 
-    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult =
-        NativePurchaseResult.Failed(SETUP_MESSAGE)
+    override suspend fun purchase(
+        productId: String,
+        appUserId: String?,
+        productType: NativeProductType,
+    ): NativePurchaseResult = NativePurchaseResult.Failed(SETUP_MESSAGE)
 
     // intentional-noop: no bridge → no store session to query, sync, restore or finish against.
     override suspend fun finishPurchase(purchase: NativePurchase) = Unit
@@ -81,7 +84,8 @@ internal class UnconfiguredStoreKitClient : NativeBillingClient {
     override suspend fun restore(): List<NativePurchase> = emptyList()
     override suspend fun manageSubscription(productId: String?) = Unit
     override suspend fun storefrontCountry(): String? = null
-    override suspend fun nativeDisplayPrice(productId: String): NativeDisplayPrice? = null
+    override suspend fun nativeDisplayPrice(productId: String, productType: NativeProductType): NativeDisplayPrice? =
+        null
 
     private companion object {
         const val SETUP_MESSAGE =
