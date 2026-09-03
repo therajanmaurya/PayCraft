@@ -22,11 +22,15 @@ import com.android.billingclient.api.QueryPurchasesParams
 import com.android.billingclient.api.acknowledgePurchase
 import com.android.billingclient.api.queryProductDetails
 import com.android.billingclient.api.queryPurchasesAsync
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /**
@@ -59,13 +63,34 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
 
     private val appContext: Context = context.applicationContext
 
-    /** Buffered so a purchase callback that arrives before [purchase] suspends is not dropped. */
-    private val purchaseUpdates = MutableSharedFlow<PurchasesUpdate>(extraBufferCapacity = 1)
+    /**
+     * Raw Play callbacks. Buffered so a callback that arrives before [purchase] suspends is not
+     * dropped, and replayed to no-one — [purchaseUpdates] is the public projection.
+     */
+    private val rawUpdates = MutableSharedFlow<PurchasesUpdate>(extraBufferCapacity = 8)
+
+    /**
+     * ALWAYS-ON out-of-band purchase stream.
+     *
+     * Play's [PurchasesUpdatedListener] fires for purchases nobody is awaiting — a promo code
+     * redeemed in the Play app, a deferred payment clearing, a purchase completing after the app
+     * was backgrounded. Previously the only consumer was `purchase()`'s `first()`, so every such
+     * callback was silently discarded and the buyer stayed un-upgraded.
+     */
+    private val outboundUpdates = MutableSharedFlow<NativePurchase>(extraBufferCapacity = 16)
+
+    override val purchaseUpdates: Flow<NativePurchase> = outboundUpdates.asSharedFlow()
 
     private val connectMutex = Mutex()
 
     private val purchasesListener = PurchasesUpdatedListener { billingResult, purchases ->
-        purchaseUpdates.tryEmit(PurchasesUpdate(billingResult, purchases.orEmpty()))
+        val update = PurchasesUpdate(billingResult, purchases.orEmpty())
+        rawUpdates.tryEmit(update)
+        // Fan every OK purchase out to the always-on stream too, regardless of whether a
+        // purchase() call is currently awaiting one.
+        if (billingResult.responseCode == BillingResponseCode.OK) {
+            update.purchases.forEach { outboundUpdates.tryEmit(it.toNativePurchase()) }
+        }
     }
 
     private val billingClient: BillingClient = BillingClient.newBuilder(appContext)
@@ -78,7 +103,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         .setListener(purchasesListener)
         .build()
 
-    override suspend fun purchase(productId: String): NativePurchaseResult {
+    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult {
         val connect = ensureConnected()
         if (connect.responseCode != BillingResponseCode.OK) {
             return NativePurchaseResult.Failed("Play billing connect failed: ${connect.debugMessage}")
@@ -99,6 +124,11 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                         .build(),
                 ),
             )
+            .apply {
+                // Bind the receipt to the app user so the server can attribute it. Play requires
+                // this to be non-identifying, so a hash — never the raw email — goes on the wire.
+                appUserId?.let { setObfuscatedAccountId(obfuscate(it)) }
+            }
             .build()
 
         val launch = billingClient.launchBillingFlow(activity, flowParams)
@@ -106,17 +136,60 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
             return NativePurchaseResult.Failed("launchBillingFlow failed: ${launch.debugMessage}")
         }
 
-        val update = purchaseUpdates.first()
+        // Correlate on the launched product and bound the wait: an uncorrelated `first()` could be
+        // consumed by an unrelated concurrent callback, and an unbounded one suspends forever if
+        // Play never calls back — pinning the paywall on Loading with no way out.
+        val update = try {
+            withTimeoutOrNull(PURCHASE_CALLBACK_TIMEOUT_MS) {
+                rawUpdates.first { u ->
+                    u.billingResult.responseCode != BillingResponseCode.OK ||
+                        u.purchases.any { productId in it.products }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            null
+        } ?: return NativePurchaseResult.Failed(
+            "Play did not report a result for $productId in time — check your purchases and retry",
+        )
+
         return when (update.billingResult.responseCode) {
             BillingResponseCode.OK -> {
                 val purchase = update.purchases.firstOrNull { productId in it.products }
                     ?: update.purchases.firstOrNull()
                     ?: return NativePurchaseResult.Failed("Play reported OK with no Purchase")
-                acknowledgeIfNeeded(purchase)
-                NativePurchaseResult.Success(purchase.toNativePurchase())
+                val native = purchase.toNativePurchase()
+                // NOTE: no acknowledge here. The purchase is acknowledged in [finishPurchase],
+                // AFTER the server records the entitlement — see the contract on that method.
+                if (native.isPending) {
+                    NativePurchaseResult.Pending(native)
+                } else {
+                    NativePurchaseResult.Success(native)
+                }
             }
             BillingResponseCode.USER_CANCELED -> NativePurchaseResult.Cancelled
             else -> NativePurchaseResult.Failed("Purchase failed: ${update.billingResult.debugMessage}")
+        }
+    }
+
+    /**
+     * Acknowledge the purchase with Play. Called by the billing manager once the entitlement is
+     * recorded server-side. An un-acknowledged purchase is auto-refunded by Play after 72 hours, so
+     * a failure here is surfaced by leaving `isAcknowledged = false` on the next
+     * [queryPurchases] — the reconcile loop retries it rather than losing it to a log line.
+     */
+    override suspend fun finishPurchase(purchase: NativePurchase) {
+        if (purchase.isPending) return // nothing to acknowledge until payment clears
+        ensureConnected()
+        val ack = billingClient.acknowledgePurchase(
+            AcknowledgePurchaseParams.newBuilder()
+                .setPurchaseToken(purchase.purchaseToken)
+                .build(),
+        )
+        if (ack.responseCode != BillingResponseCode.OK) {
+            Logger.w("PlayBillingNativeClient") {
+                "acknowledgePurchase failed (${ack.responseCode}): ${ack.debugMessage} — " +
+                    "will retry on the next reconcile (Play auto-refunds after 72h)"
+            }
         }
     }
 
@@ -126,8 +199,15 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
             .setProductType(BillingClient.ProductType.SUBS)
             .build()
         val result = billingClient.queryPurchasesAsync(params)
+        // PENDING purchases are RETAINED (flagged via NativePurchase.isPending) rather than
+        // filtered away: dropping them is how cash/UPI and Ask-to-Buy buyers lost purchases that
+        // were still legitimately in flight. The caller decides what a pending purchase means; it
+        // is never an entitlement, but it is also never nothing.
         return result.purchasesList
-            .filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
+            .filter {
+                it.purchaseState == Purchase.PurchaseState.PURCHASED ||
+                    it.purchaseState == Purchase.PurchaseState.PENDING
+            }
             .map { it.toNativePurchase() }
     }
 
@@ -215,20 +295,6 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         return result.productDetailsList?.firstOrNull()
     }
 
-    private suspend fun acknowledgeIfNeeded(purchase: Purchase) {
-        if (purchase.purchaseState != Purchase.PurchaseState.PURCHASED || purchase.isAcknowledged) return
-        val ack = billingClient.acknowledgePurchase(
-            AcknowledgePurchaseParams.newBuilder()
-                .setPurchaseToken(purchase.purchaseToken)
-                .build(),
-        )
-        if (ack.responseCode != BillingResponseCode.OK) {
-            Logger.w("PlayBillingNativeClient") {
-                "acknowledgePurchase failed (${ack.responseCode}): ${ack.debugMessage}"
-            }
-        }
-    }
-
     /** Idempotent, serialized connect — no-op when the client is already ready. */
     private suspend fun ensureConnected(): BillingResult = connectMutex.withLock {
         if (billingClient.isReady) return@withLock okResult()
@@ -255,7 +321,35 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         purchaseTimeMillis = purchaseTime,
         isAutoRenewing = isAutoRenewing,
         packageName = packageName,
+        isPending = purchaseState == Purchase.PurchaseState.PENDING,
+        isAcknowledged = isAcknowledged,
     )
 
     private data class PurchasesUpdate(val billingResult: BillingResult, val purchases: List<Purchase>)
+
+    private companion object {
+        /**
+         * How long to wait for Play's purchase callback before giving up. Generous — the user is
+         * interacting with the Play sheet — but finite, so a callback that never arrives surfaces a
+         * recoverable error instead of a permanently spinning paywall.
+         */
+        const val PURCHASE_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000L
+
+        /**
+         * Play requires `obfuscatedAccountId` to be non-identifying and caps it at 64 chars, so the
+         * app-user id is hashed rather than sent raw. Stable for a given id, which is all the
+         * server needs to correlate.
+         */
+        fun obfuscate(appUserId: String): String {
+            var h1 = -0x340d631b_00000000L
+            for (c in appUserId) {
+                h1 = (h1 xor c.code.toLong()) * 0x100000001b3L
+            }
+            var h2 = 0x84222325cbf29ce4uL.toLong()
+            for (c in appUserId.reversed()) {
+                h2 = (h2 xor c.code.toLong()) * 0x100000001b3L
+            }
+            return (h1.toULong().toString(16) + h2.toULong().toString(16)).take(64)
+        }
+    }
 }

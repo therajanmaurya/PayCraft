@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.presentation.components.PlanCard
+import com.mobilebytelabs.paycraft.ui.components.PaymentPendingContent
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.paywallRoot
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsLight
@@ -30,6 +31,7 @@ fun MinimalTemplate(state: BillingState, products: List<Product>, onPick: (Produ
             is BillingState.Free -> MinimalFree(products, onPick)
             is BillingState.Premium -> MinimalPremium(state)
             is BillingState.Error -> MinimalError(state.message, onRetry)
+            is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
             is BillingState.DeviceConflict -> MinimalDeviceConflict(state)
             is BillingState.OwnershipVerified -> MinimalOwnershipVerified(state)
         }

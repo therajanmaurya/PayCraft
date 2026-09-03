@@ -97,6 +97,12 @@ class PayCraftBillingManager(
     private var lastConflict: BillingState.DeviceConflict? = null
 
     init {
+        // Attach the store's always-on purchase stream and sweep anything left unfinished BEFORE
+        // any other init work: a purchase that completed while the app was dead must be reconciled
+        // whether or not the user opens the paywall.
+        observeOutOfBandPurchases()
+        reconcileUnfinishedPurchases()
+
         // Synchronous cache read — runs before any UI frame (no Loading flash)
         val cached = store.getCachedSubscriptionStatus()
         val lastSynced = store.getLastSyncedAt()
@@ -234,7 +240,7 @@ class PayCraftBillingManager(
 
         _billingState.value = BillingState.Loading
         scope.launch {
-            when (val result = native.purchase(productId)) {
+            when (val result = native.purchase(productId, appUserId)) {
                 is NativePurchaseResult.Success -> {
                     val purchase = result.purchase
                     PayCraftLogger.onFlow(tag, "$storeLabel purchase OK (product=$productId)")
@@ -271,6 +277,11 @@ class PayCraftBillingManager(
                             _subscriptionActivated.emit(SubscriptionActivated(sku = status.plan, isTrial = false))
                         }
                         lastObservedPremium = true
+                        // ONLY NOW is it safe to tell the store we are done with this purchase.
+                        // Acknowledging/finishing earlier drops it from the store's unfinished
+                        // queue, so a failed server call would leave a paying customer with no
+                        // entitlement and nothing to retry against.
+                        finishPurchaseSafely(native, purchase, tag)
                     } else if (register != null && entitlement == null) {
                         // A grant endpoint EXISTS but did not confirm — surface the failure.
                         _billingState.value = BillingState.Error(
@@ -299,6 +310,17 @@ class PayCraftBillingManager(
                     }
                 }
 
+                is NativePurchaseResult.Pending -> {
+                    // Money is in flight (cash / UPI mandate / Ask to Buy). NOT an error and NOT an
+                    // entitlement — the resolution arrives later on purchaseUpdates, which
+                    // [observeOutOfBandPurchases] is collecting.
+                    PayCraftLogger.onFlow(
+                        tag,
+                        "$storeLabel purchase PENDING for $productId — awaiting payment clearance",
+                    )
+                    _billingState.value = BillingState.PaymentPending(productId)
+                }
+
                 NativePurchaseResult.Cancelled -> {
                     PayCraftLogger.onFlow(tag, "$storeLabel purchase cancelled by user")
                     // Return to the pre-purchase resting state rather than an error.
@@ -315,6 +337,106 @@ class PayCraftBillingManager(
                 }
             }
         }
+    }
+
+    /**
+     * Acknowledge/finish with the store, never letting a store failure break the user's session.
+     * A failure leaves the purchase unacknowledged, which [reconcileUnfinishedPurchases] retries —
+     * that retry is what stops Play auto-refunding it after 72 hours.
+     */
+    private suspend fun finishPurchaseSafely(native: NativeBillingClient, purchase: NativePurchase, tag: String) {
+        try {
+            native.finishPurchase(purchase)
+        } catch (e: Exception) {
+            PayCraftLogger.onError(tag, "finishPurchase failed (will retry on reconcile): ${e.message}")
+        }
+    }
+
+    /**
+     * Collect the store's ALWAYS-ON purchase stream for the SDK's lifetime.
+     *
+     * Everything that happens outside a foreground `purchase()` call lands here: renewals, promo
+     * redemptions, deferred payments clearing days later, Ask-to-Buy approvals, family-sharing
+     * grants, purchases that completed while the app was backgrounded, and StoreKit transactions
+     * left unfinished by an earlier failed reconcile. Before this existed every one of those was
+     * dropped and the buyer stayed un-upgraded until some later manual refresh.
+     */
+    private fun observeOutOfBandPurchases() {
+        val native = nativeBillingClient ?: return
+        scope.launch {
+            native.purchaseUpdates.collect { purchase ->
+                if (purchase.isPending) {
+                    PayCraftLogger.onFlow(
+                        "purchaseUpdates",
+                        "pending purchase observed for ${purchase.productId} — not granting yet",
+                    )
+                    _billingState.value = BillingState.PaymentPending(purchase.productId)
+                    return@collect
+                }
+                PayCraftLogger.onFlow(
+                    "purchaseUpdates",
+                    "out-of-band purchase observed for ${purchase.productId} — reconciling",
+                )
+                registerAndFinish(native, purchase, "purchaseUpdates")
+            }
+        }
+    }
+
+    /**
+     * Re-drive any purchase the store still considers unfinished.
+     *
+     * Play returns unacknowledged purchases from `queryPurchasesAsync` and auto-refunds them after
+     * 72 hours; StoreKit re-delivers unfinished transactions on `Transaction.updates`. Sweeping on
+     * start and foreground turns a transient failure at exactly the wrong moment into a retry
+     * instead of a silently refunded customer.
+     */
+    private fun reconcileUnfinishedPurchases() {
+        val native = nativeBillingClient ?: return
+        scope.launch {
+            val purchases = try {
+                native.queryPurchases()
+            } catch (e: Exception) {
+                PayCraftLogger.onError("reconcileUnfinished", e.message)
+                return@launch
+            }
+            purchases.filter { !it.isAcknowledged && !it.isPending }.forEach { purchase ->
+                PayCraftLogger.onFlow(
+                    "reconcileUnfinished",
+                    "unacknowledged purchase ${purchase.productId} — re-registering",
+                )
+                registerAndFinish(native, purchase, "reconcileUnfinished")
+            }
+        }
+    }
+
+    /** Register a store purchase server-side, then finish it with the store if that succeeded. */
+    private suspend fun registerAndFinish(native: NativeBillingClient, purchase: NativePurchase, tag: String) {
+        val appUserId = _userEmail.value ?: PayCraft.deviceId
+        val entitlement = try {
+            // Play is the only store with a client-facing grant endpoint today; StoreKit truth
+            // lands via the ASSN-V2 webhook, so there we reconcile through refreshStatus instead.
+            if (purchase.packageName != null && PlatformInfo.platform.equals("android", ignoreCase = true)) {
+                service.registerPlayPurchase(
+                    purchaseToken = purchase.purchaseToken,
+                    productId = purchase.productId,
+                    appUserId = appUserId,
+                    packageName = purchase.packageName.orEmpty(),
+                )
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            PayCraftLogger.onError(tag, "server register failed — NOT finishing purchase: ${e.message}")
+            return
+        }
+
+        val granted = entitlement != null &&
+            entitlement.canonicalState.lowercase() in premiumCanonicalStates
+        if (granted || entitlement == null) {
+            // entitlement == null on StoreKit: the webhook is authoritative, so refresh and finish.
+            finishPurchaseSafely(native, purchase, tag)
+        }
+        refreshStatus(force = true)
     }
 
     override suspend fun checkTrialEligibility(): Boolean {
@@ -621,6 +743,10 @@ class PayCraftBillingManager(
      * FRESH sibling ([EntitlementRepository.streamFresh], S5-DUAL). No-op when [repo] is unwired.
      */
     fun onForeground(appUserId: String) {
+        // Foreground is the other moment a purchase may have resolved while we were not running
+        // (a pending payment clearing, an Ask-to-Buy approval, an acknowledgement that failed
+        // last session and is now inside Play's 72-hour auto-refund window).
+        reconcileUnfinishedPurchases()
         val repo = repo ?: return
         scope.launch {
             repo.streamFresh(appUserId)

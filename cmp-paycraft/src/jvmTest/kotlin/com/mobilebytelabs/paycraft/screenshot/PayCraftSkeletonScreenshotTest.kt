@@ -125,6 +125,30 @@ class PayCraftSkeletonScreenshotTest {
     }
 
     /**
+     * Golden #5 — BillingState.PaymentPending (PB-3 / SK-6).
+     *
+     * The state that used to render through the ERROR branch, telling a buyer whose cash/UPI or
+     * Ask-to-Buy payment was still clearing that it had failed — and pushing them into a duplicate
+     * purchase. The golden pins the reassuring copy, and specifically that no retry/buy affordance
+     * is offered.
+     */
+    @Test
+    fun payment_pending_render() = runComposeUiTest {
+        setContent {
+            DeterministicPayCraftTheme(config = deterministicSuiteConfig()) {
+                BrandedStackTemplate(
+                    state = BillingState.PaymentPending("premium_monthly"),
+                    products = deterministicProducts(),
+                    onPickProduct = { /* deterministic no-op */ },
+                    onRetry = { /* deterministic no-op */ },
+                )
+            }
+        }
+        onRoot().captureRoboImage("src/jvmTest/resources/screenshots/payment_pending.png")
+        assertCapturedFileExists("src/jvmTest/resources/screenshots/payment_pending.png")
+    }
+
+    /**
      * Golden #4 — the UI-1/UI-2 fix, rendered.
      *
      * Composes the branded paywall in [PayCraftSurfaceMode.Sheet] over a magenta stand-in for the

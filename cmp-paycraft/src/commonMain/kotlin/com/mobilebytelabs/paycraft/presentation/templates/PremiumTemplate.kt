@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.presentation.components.PlanCard
+import com.mobilebytelabs.paycraft.ui.components.PaymentPendingContent
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.paywallRoot
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsLight
@@ -36,6 +37,7 @@ fun PremiumTemplate(state: BillingState, products: List<Product>, onPick: (Produ
             is BillingState.Free -> PremiumFree(products, onPick)
             is BillingState.Premium -> PremiumActive(state)
             is BillingState.Error -> PremiumError(state.message, onRetry)
+            is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
             is BillingState.DeviceConflict -> PremiumDeviceConflict(state)
             is BillingState.OwnershipVerified -> PremiumOwnershipVerified(state)
         }

@@ -39,6 +39,7 @@ import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.ui.LocalPayCraftPaywallFooterActions
 import com.mobilebytelabs.paycraft.ui.ProductList
+import com.mobilebytelabs.paycraft.ui.components.PaymentPendingContent
 import com.mobilebytelabs.paycraft.ui.components.rememberHeroIconOverride
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.paywallContentSize
@@ -78,6 +79,7 @@ fun BrandedStackTemplate(
             is BillingState.Free -> BrandedStackFree(products, onPickProduct)
             is BillingState.Premium -> BrandedStackPremium(state)
             is BillingState.Error -> BrandedStackError(state.message, onRetry)
+            is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
             is BillingState.DeviceConflict -> BrandedStackDeviceConflict(state)
             is BillingState.OwnershipVerified -> BrandedStackOwnershipVerified(state)
         }

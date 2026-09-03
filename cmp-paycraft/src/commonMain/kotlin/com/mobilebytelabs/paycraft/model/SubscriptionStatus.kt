@@ -32,6 +32,20 @@ sealed interface BillingState {
     data class Error(val message: String) : BillingState
 
     /**
+     * The store accepted the order but payment has not cleared yet — Play `PurchaseState.PENDING`
+     * (cash, UPI mandate, or a family Ask-to-Buy awaiting approval) or StoreKit `.pending`
+     * (Ask to Buy / SCA).
+     *
+     * This is NOT [Error] and NOT [Premium]. The buyer's money is in flight and the resolution can
+     * take days; it arrives asynchronously on `NativeBillingClient.purchaseUpdates`. Rendering it
+     * as an error — which the SDK did before this arm existed — tells a buyer their payment failed
+     * while the store is still processing it, and is a common cause of duplicate purchases.
+     *
+     * @param productId the product awaiting payment, so the UI can name what is pending.
+     */
+    data class PaymentPending(val productId: String) : BillingState
+
+    /**
      * Subscription exists but is bound to a different (active) device.
      *
      * Resolution priority:

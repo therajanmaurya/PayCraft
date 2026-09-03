@@ -85,9 +85,19 @@ class SpyNativeBillingClient : NativeBillingClient {
     var syncCalls = 0
     var restoreCalls = 0
     var manageCalls = 0
+    var finishCalls = 0
     val manageProductIds = mutableListOf<String?>()
 
-    override suspend fun purchase(productId: String): NativePurchaseResult = NativePurchaseResult.Cancelled
+    override val purchaseUpdates: kotlinx.coroutines.flow.Flow<NativePurchase> =
+        kotlinx.coroutines.flow.emptyFlow()
+
+    override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult =
+        NativePurchaseResult.Cancelled
+
+    override suspend fun finishPurchase(purchase: NativePurchase) {
+        finishCalls++
+    }
+
     override suspend fun queryPurchases(): List<NativePurchase> = emptyList()
     override suspend fun sync() {
         syncCalls++

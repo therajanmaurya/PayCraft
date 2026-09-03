@@ -34,11 +34,20 @@ import PayCraftShared
 @objcMembers
 public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
 
+    /// Held for the process lifetime — see `startTransactionUpdates(listener:)`.
+    private var updatesTask: Task<Void, Never>?
+
     public override init() { super.init() }
+
+    deinit { updatesTask?.cancel() }
 
     // MARK: purchase(productId:) -> StoreKit2Outcome
 
-    public func purchase(productId: String, completionHandler: @escaping (StoreKit2Outcome?, Error?) -> Void) {
+    public func purchase(
+        productId: String,
+        appAccountToken: String?,
+        completionHandler: @escaping (StoreKit2Outcome?, Error?) -> Void
+    ) {
         Task {
             do {
                 let products = try await Product.products(for: [productId])
@@ -46,12 +55,25 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
                     completionHandler(StoreKit2OutcomeFailed(message: "Product not found: \(productId)"), nil)
                     return
                 }
-                let result = try await product.purchase()
+
+                // Bind the transaction to the app user so the App Store Server Notification can be
+                // attributed. StoreKit requires a UUID here; Kotlin derives a stable one from the
+                // app-user id.
+                var options: Set<Product.PurchaseOption> = []
+                if let token = appAccountToken, let uuid = UUID(uuidString: token) {
+                    options.insert(.appAccountToken(uuid))
+                }
+
+                let result = try await product.purchase(options: options)
                 switch result {
                 case .success(let verification):
                     let transaction = try self.checkVerified(verification)
-                    // Finishing the transaction tells StoreKit it has been delivered/recorded.
-                    await transaction.finish()
+                    // DELIBERATELY NOT finishing here. finish() removes the transaction from
+                    // StoreKit's unfinished queue; if the server call that follows fails, the
+                    // purchase would be unrecoverable and the customer would have paid for
+                    // nothing. Kotlin calls finish(transactionId:) once the entitlement is
+                    // recorded server-side, and anything still unfinished is re-delivered by
+                    // Transaction.updates on the next launch.
                     completionHandler(
                         StoreKit2OutcomeSuccess(transaction: self.map(transaction, jws: verification.jwsRepresentation)),
                         nil
@@ -59,13 +81,53 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
                 case .userCancelled:
                     completionHandler(StoreKit2Outcome.Cancelled(), nil)
                 case .pending:
-                    completionHandler(StoreKit2OutcomeFailed(message: "Purchase pending (Ask to Buy / SCA)"), nil)
+                    // Ask to Buy awaiting a parent, or SCA in progress. NOT a failure — the
+                    // approval arrives later on Transaction.updates.
+                    completionHandler(StoreKit2Outcome.Pending(), nil)
                 @unknown default:
                     completionHandler(StoreKit2OutcomeFailed(message: "Unknown StoreKit purchase result"), nil)
                 }
             } catch {
                 completionHandler(StoreKit2OutcomeFailed(message: "StoreKit purchase failed: \(error.localizedDescription)"), nil)
             }
+        }
+    }
+
+    // MARK: startTransactionUpdates(listener:) — the listener Apple requires you to run
+
+    /// Attaches `Transaction.updates` for the process lifetime.
+    ///
+    /// This is the ONLY delivery path for renewals, Ask-to-Buy approvals, family-sharing grants,
+    /// refunds, revocations, and transactions interrupted mid-purchase. Without it the SDK sees
+    /// only what completes inside a foreground `purchase()` call, and an unfinished transaction
+    /// replays forever because nothing ever finishes it.
+    public func startTransactionUpdates(listener: StoreKit2TransactionListener) {
+        // Retained deliberately: this Task must outlive the call. Cancelling it would silently
+        // stop all out-of-band purchase delivery.
+        self.updatesTask = Task.detached { [weak self] in
+            for await verification in Transaction.updates {
+                guard let self = self else { return }
+                guard let transaction = try? self.checkVerified(verification) else { continue }
+                listener.onTransaction(
+                    transaction: self.map(transaction, jws: verification.jwsRepresentation)
+                )
+            }
+        }
+    }
+
+    // MARK: finish(transactionId:)
+
+    /// Finishes the transaction — called from Kotlin ONLY after the server records the entitlement.
+    public func finish(transactionId: String, completionHandler: @escaping (KotlinUnit?, Error?) -> Void) {
+        Task {
+            for await verification in Transaction.unfinished {
+                guard let transaction = try? self.checkVerified(verification) else { continue }
+                if String(transaction.id) == transactionId {
+                    await transaction.finish()
+                    break
+                }
+            }
+            completionHandler(KotlinUnit(), nil)
         }
     }
 
@@ -169,7 +231,13 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
             jwsRepresentation: jws,
             originalId: String(transaction.originalID),
             purchaseDateMillis: Int64(transaction.purchaseDate.timeIntervalSince1970 * 1000.0),
-            isAutoRenewing: transaction.productType == .autoRenewable
+            // NOTE: productType == .autoRenewable reports what KIND of product this is, not
+            // whether renewal is switched on — a cancelled-but-still-active subscription reports
+            // true here. The real value comes from SubscriptionInfo.RenewalInfo.willAutoRenew and
+            // is corrected in Phase 3; keeping the shape stable until then.
+            isAutoRenewing: transaction.productType == .autoRenewable,
+            transactionId: String(transaction.id),
+            isUnfinished: true
         )
     }
 }

@@ -13,6 +13,12 @@ object PayCraftTestTags {
     const val LOADING_INDICATOR = "paycraft_loading_indicator"
     const val ERROR_MESSAGE = "paycraft_error_message"
 
+    /** BillingState.PaymentPending surface — store took the order, money has not cleared. */
+    const val PAYMENT_PENDING = "paycraft_payment_pending"
+
+    /** The "you don't need to buy again" line — the anti-duplicate-purchase guarantee. */
+    const val PAYMENT_PENDING_REASSURANCE = "paycraft_payment_pending_reassurance"
+
     // Plan selection
     const val PLAN_SELECTOR_ROW = "paycraft_plan_selector_row"
     const val PLAN_CARD_PREFIX = "paycraft_plan_card_" // append plan.id

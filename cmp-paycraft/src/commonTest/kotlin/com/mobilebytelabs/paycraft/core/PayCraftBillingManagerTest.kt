@@ -173,10 +173,13 @@ class PayCraftBillingManagerTest {
      */
     private class FakeNativeBillingClient : NativeBillingClient {
         var purchaseCalled = false
-        override suspend fun purchase(productId: String): NativePurchaseResult {
+        override val purchaseUpdates: kotlinx.coroutines.flow.Flow<NativePurchase> =
+            kotlinx.coroutines.flow.emptyFlow()
+        override suspend fun purchase(productId: String, appUserId: String?): NativePurchaseResult {
             purchaseCalled = true
             return NativePurchaseResult.Failed("not exercised in this test")
         }
+        override suspend fun finishPurchase(purchase: NativePurchase) = Unit
         override suspend fun queryPurchases(): List<NativePurchase> = emptyList()
         override suspend fun sync() = Unit
         override suspend fun restore(): List<NativePurchase> = emptyList()

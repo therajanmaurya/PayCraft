@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.presentation.components.PlanCard
+import com.mobilebytelabs.paycraft.ui.components.PaymentPendingContent
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.paywallRoot
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsDark
@@ -37,6 +38,7 @@ fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product)
             is BillingState.Free -> DarkFree(products, onPick, onBg)
             is BillingState.Premium -> DarkActive(state, onBg)
             is BillingState.Error -> DarkError(state.message, onRetry, onBg)
+            is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
             is BillingState.DeviceConflict -> DarkDeviceConflict(state, onBg)
             is BillingState.OwnershipVerified -> DarkOwnershipVerified(state, onBg)
         }
