@@ -39,6 +39,24 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
 
     public override init() { super.init() }
 
+    /// Install PayCraft's StoreKit 2 support. Call ONCE at app start:
+    ///
+    /// ```swift
+    /// PayCraftStoreKit2.install()
+    /// ```
+    ///
+    /// Constructs the shim, hands it to the Kotlin SDK, and attaches `Transaction.updates` so
+    /// renewals, Ask-to-Buy approvals, refunds and interrupted purchases are delivered from the
+    /// moment the app launches — not just while a paywall happens to be open.
+    ///
+    /// Replaces the old three-step wiring (copy the file, edit its import, register a Koin module).
+    @discardableResult
+    public static func install() -> PayCraftStoreKit2 {
+        let shim = PayCraftStoreKit2()
+        PayCraftStoreKit.shared.register(bridge: shim)
+        return shim
+    }
+
     deinit { updatesTask?.cancel() }
 
     // MARK: purchase(productId:) -> StoreKit2Outcome
@@ -74,10 +92,8 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
                     // nothing. Kotlin calls finish(transactionId:) once the entitlement is
                     // recorded server-side, and anything still unfinished is re-delivered by
                     // Transaction.updates on the next launch.
-                    completionHandler(
-                        StoreKit2OutcomeSuccess(transaction: self.map(transaction, jws: verification.jwsRepresentation)),
-                        nil
-                    )
+                    let mapped = await self.mapResolving(transaction, jws: verification.jwsRepresentation)
+                    completionHandler(StoreKit2OutcomeSuccess(transaction: mapped), nil)
                 case .userCancelled:
                     completionHandler(StoreKit2Outcome.Cancelled(), nil)
                 case .pending:
@@ -108,9 +124,8 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
             for await verification in Transaction.updates {
                 guard let self = self else { return }
                 guard let transaction = try? self.checkVerified(verification) else { continue }
-                listener.onTransaction(
-                    transaction: self.map(transaction, jws: verification.jwsRepresentation)
-                )
+                let mapped = await self.mapResolving(transaction, jws: verification.jwsRepresentation)
+                listener.onTransaction(transaction: mapped)
             }
         }
     }
@@ -138,7 +153,7 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
             var out: [StoreKit2Transaction] = []
             for await verification in Transaction.currentEntitlements {
                 guard let transaction = try? self.checkVerified(verification) else { continue }
-                out.append(self.map(transaction, jws: verification.jwsRepresentation))
+                out.append(await self.mapResolving(transaction, jws: verification.jwsRepresentation))
             }
             completionHandler(out, nil)
         }
@@ -225,19 +240,66 @@ public final class PayCraftStoreKit2: NSObject, StoreKit2Bridge {
         }
     }
 
-    private func map(_ transaction: Transaction, jws: String) -> StoreKit2Transaction {
+    /// Maps a verified transaction, resolving REAL renewal state from the subscription status.
+    ///
+    /// `willAutoRenew` cannot be read off `Transaction` — it lives on
+    /// `Product.SubscriptionInfo.RenewalInfo`, which requires an async status lookup. Callers that
+    /// already hold a renewal state pass it in; the rest get `nil` and fall back to the
+    /// product-type heuristic ONLY for non-subscriptions, where it is exact.
+    private func map(
+        _ transaction: Transaction,
+        jws: String,
+        willAutoRenew: Bool? = nil,
+        renewalState: String? = nil
+    ) -> StoreKit2Transaction {
         StoreKit2Transaction(
             productId: transaction.productID,
             jwsRepresentation: jws,
             originalId: String(transaction.originalID),
             purchaseDateMillis: Int64(transaction.purchaseDate.timeIntervalSince1970 * 1000.0),
-            // NOTE: productType == .autoRenewable reports what KIND of product this is, not
-            // whether renewal is switched on — a cancelled-but-still-active subscription reports
-            // true here. The real value comes from SubscriptionInfo.RenewalInfo.willAutoRenew and
-            // is corrected in Phase 3; keeping the shape stable until then.
-            isAutoRenewing: transaction.productType == .autoRenewable,
+            // `productType == .autoRenewable` answers "is this the KIND of product that renews",
+            // NOT "will it renew". Every auto-renewable subscription returned true — including one
+            // the user cancelled yesterday that is running out its paid term — so the paywall told
+            // cancelled subscribers they would be charged again. Real value or nothing.
+            isAutoRenewing: willAutoRenew ?? false,
             transactionId: String(transaction.id),
-            isUnfinished: true
+            isUnfinished: true,
+            renewalState: renewalState
         )
+    }
+
+    /// Resolves `willAutoRenew` + a coarse renewal state for a subscription transaction.
+    ///
+    /// Returns `(nil, nil)` for non-subscriptions and when the status lookup fails — callers then
+    /// report "unknown" rather than guessing, because guessing here is what produced the bug.
+    private func renewalInfo(for transaction: Transaction) async -> (Bool?, String?) {
+        guard transaction.productType == .autoRenewable else { return (nil, nil) }
+        guard let statuses = try? await Product.SubscriptionInfo.status(
+            for: transaction.subscriptionGroupID ?? ""
+        ) else { return (nil, nil) }
+
+        for status in statuses {
+            guard let renewal = try? self.checkVerified(status.renewalInfo),
+                  let txn = try? self.checkVerified(status.transaction),
+                  txn.originalID == transaction.originalID else { continue }
+
+            let state: String
+            switch status.state {
+            case .subscribed:          state = "subscribed"
+            case .inGracePeriod:       state = "in_grace_period"
+            case .inBillingRetryPeriod: state = "billing_retry"
+            case .expired:             state = "expired"
+            case .revoked:             state = "revoked"
+            default:                   state = "unknown"
+            }
+            return (renewal.willAutoRenew, state)
+        }
+        return (nil, nil)
+    }
+
+    /// Map with renewal state resolved. Used on every path that reports a subscription upward.
+    private func mapResolving(_ transaction: Transaction, jws: String) async -> StoreKit2Transaction {
+        let (willRenew, state) = await self.renewalInfo(for: transaction)
+        return self.map(transaction, jws: jws, willAutoRenew: willRenew, renewalState: state)
     }
 }

@@ -106,6 +106,9 @@ class StoreKit2NativeBillingClient(private val bridge: StoreKit2Bridge) : Native
         purchaseToken = jwsRepresentation,
         originalTransactionId = originalId,
         purchaseTimeMillis = purchaseDateMillis,
+        // Now the REAL renewal switch (Product.SubscriptionInfo.RenewalInfo.willAutoRenew), not
+        // "is this an auto-renewable product" — which reported true for cancelled subscriptions
+        // and made the paywall promise a charge that was never coming.
         isAutoRenewing = isAutoRenewing,
         // StoreKit's per-transaction id rides in packageName, the one free-form slot on the
         // store-agnostic value object (Play uses it for the app package, which StoreKit has no

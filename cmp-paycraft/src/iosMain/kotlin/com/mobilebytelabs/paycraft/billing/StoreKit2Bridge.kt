@@ -99,6 +99,15 @@ data class StoreKit2Transaction(
     val transactionId: String = "",
     /** This transaction is still unfinished (server has not confirmed the entitlement yet). */
     val isUnfinished: Boolean = true,
+    /**
+     * Coarse subscription renewal state from `Product.SubscriptionInfo.Status.state` —
+     * `subscribed | in_grace_period | billing_retry | expired | revoked | unknown`, or null for a
+     * non-subscription (or when the status lookup failed).
+     *
+     * Without this the SDK could not tell dunning from churn on iOS: a subscriber in Apple's
+     * billing-retry window looked identical to one who had simply expired.
+     */
+    val renewalState: String? = null,
 )
 
 /**

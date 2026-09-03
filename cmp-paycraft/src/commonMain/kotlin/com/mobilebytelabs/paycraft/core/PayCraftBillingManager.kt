@@ -184,11 +184,19 @@ class PayCraftBillingManager(
         storeLabel = "StoreKit",
         notWiredError = "App Store billing is not available on this device",
         misconfiguredError = "App Store product not configured",
-        // No client-facing StoreKit grant endpoint today: entitlement truth lands server-side via the
-        // Apple App Store Server Notifications (ASSN-V2) webhook, so we skip the immediate register
-        // call and reconcile through the normal server path below. (Follow-up: a client-facing
-        // register-appstore endpoint mirroring register-play-purchase would enable instant unlock.)
-        register = null,
+        // StoreKit now has a client-facing grant endpoint too (SK-4): post the signed transaction
+        // to register-appstore, which JWS-verifies it and re-fetches authoritative status from the
+        // App Store Server API. This removes the race where the client's reconcile read beat
+        // Apple's ASSN-V2 webhook and the paywall reappeared straight after a successful payment.
+        // ASSN-V2 keeps running as the async channel for renewals/refunds; both converge on the
+        // same canonical record.
+        register = { purchase, resolvedProductId, appUserId ->
+            service.registerAppStorePurchase(
+                signedTransaction = purchase.purchaseToken, // StoreKit JWS rides in purchaseToken
+                appUserId = appUserId,
+                productId = resolvedProductId,
+            )
+        },
     )
 
     /**
@@ -412,30 +420,36 @@ class PayCraftBillingManager(
     /** Register a store purchase server-side, then finish it with the store if that succeeded. */
     private suspend fun registerAndFinish(native: NativeBillingClient, purchase: NativePurchase, tag: String) {
         val appUserId = _userEmail.value ?: PayCraft.deviceId
+        val platform = runCatching { PlatformInfo.platform.lowercase() }.getOrDefault("")
         val entitlement = try {
-            // Play is the only store with a client-facing grant endpoint today; StoreKit truth
-            // lands via the ASSN-V2 webhook, so there we reconcile through refreshStatus instead.
-            if (purchase.packageName != null && PlatformInfo.platform.equals("android", ignoreCase = true)) {
-                service.registerPlayPurchase(
+            when {
+                platform == "android" -> service.registerPlayPurchase(
                     purchaseToken = purchase.purchaseToken,
                     productId = purchase.productId,
                     appUserId = appUserId,
                     packageName = purchase.packageName.orEmpty(),
                 )
-            } else {
-                null
+                platform == "ios" || platform == "macos" -> service.registerAppStorePurchase(
+                    signedTransaction = purchase.purchaseToken,
+                    appUserId = appUserId,
+                    productId = purchase.productId,
+                )
+                else -> null
             }
         } catch (e: Exception) {
             PayCraftLogger.onError(tag, "server register failed — NOT finishing purchase: ${e.message}")
             return
         }
 
-        val granted = entitlement != null &&
-            entitlement.canonicalState.lowercase() in premiumCanonicalStates
-        if (granted || entitlement == null) {
-            // entitlement == null on StoreKit: the webhook is authoritative, so refresh and finish.
-            finishPurchaseSafely(native, purchase, tag)
+        if (entitlement == null) {
+            // Both stores now have a grant endpoint, so a null here means the server did NOT
+            // record the entitlement. Leave the purchase unfinished so the store keeps it in its
+            // unfinished queue and the next reconcile retries it.
+            PayCraftLogger.onError(tag, "server did not confirm ${purchase.productId} — leaving unfinished")
+            refreshStatus(force = true)
+            return
         }
+        finishPurchaseSafely(native, purchase, tag)
         refreshStatus(force = true)
     }
 

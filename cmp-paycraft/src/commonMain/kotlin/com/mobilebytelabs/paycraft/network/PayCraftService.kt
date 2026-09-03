@@ -194,11 +194,41 @@ interface PayCraftService {
         appUserId: String,
         packageName: String,
     ): EntitlementDto? = null
+
+    /**
+     * Register a completed **StoreKit** purchase server-side — the Apple mirror of
+     * [registerPlayPurchase].
+     *
+     * POSTs the signed transaction to the `register-appstore` edge function, which (1) verifies the
+     * JWS against Apple's pinned root, (2) rejects an originalTransactionId already bound to a
+     * different user (receipt sharing), (3) re-fetches authoritative status from the App Store
+     * Server API, and (4) reconciles ONE canonical entitlement.
+     *
+     * WHY: without this, an iOS buyer's unlock depended on Apple's ASSN-V2 webhook landing before
+     * the client's own reconcile read — a race the client usually wins, so the paywall reappeared
+     * immediately after a successful payment. ASSN-V2 remains the authoritative async channel for
+     * renewals and refunds; both converge on the same record.
+     *
+     * @param signedTransaction the StoreKit2 `VerificationResult.jwsRepresentation`.
+     * @param appUserId the STABLE app-user-id the entitlement is keyed on (email or device id).
+     * @param productId the App Store product id that was purchased (a hint only — Apple is truth).
+     * @return the reconciled entitlement, or null on failure. Default null keeps fakes/mocks
+     *   source-compatible.
+     */
+    suspend fun registerAppStorePurchase(
+        signedTransaction: String,
+        appUserId: String,
+        productId: String,
+    ): EntitlementDto? = null
 }
 
 /** Wire shape of the `register-play-purchase` edge-function response. */
 @Serializable
 data class RegisterPlayPurchaseResponse(val entitlement: EntitlementDto? = null)
+
+/** Wire shape of the `register-appstore` edge-function response. */
+@Serializable
+data class RegisterAppStoreResponse(val entitlement: EntitlementDto? = null)
 
 // ─── Implementation ───────────────────────────────────────────────────────────
 
@@ -487,6 +517,45 @@ class PayCraftServiceImpl(private val client: SupabaseClient, private val apiKey
         decoded.entitlement
     } catch (e: Exception) {
         PayCraftLogger.onRpcError("register_play_purchase", e.message)
+        null
+    }
+
+    override suspend fun registerAppStorePurchase(
+        signedTransaction: String,
+        appUserId: String,
+        productId: String,
+    ): EntitlementDto? = try {
+        val backend = PayCraft.backend
+        val url = "${backend.supabaseUrl}/functions/v1/register-appstore"
+        PayCraftLogger.onRpcCall("register_appstore", "product=$productId")
+        val response: HttpResponse = http.post(url) {
+            header("Authorization", "Bearer ${backend.supabaseAnonKey}")
+            header("apikey", backend.supabaseAnonKey)
+            contentType(ContentType.Application.Json)
+            setBody(
+                buildJsonObject {
+                    put("signed_transaction", signedTransaction)
+                    put("app_user_id", appUserId)
+                    put("product_id", productId)
+                    apiKey?.let { put("api_key", it) }
+                },
+            )
+        }
+        if (!response.status.isSuccess()) {
+            PayCraftLogger.onRpcError(
+                "register_appstore",
+                "HTTP ${response.status.value}: ${response.body<String>()}",
+            )
+            return null
+        }
+        val decoded: RegisterAppStoreResponse = response.body()
+        PayCraftLogger.onRpcResult(
+            "register_appstore",
+            "state=${decoded.entitlement?.canonicalState ?: "null"}",
+        )
+        decoded.entitlement
+    } catch (e: Exception) {
+        PayCraftLogger.onRpcError("register_appstore", e.message)
         null
     }
 }
