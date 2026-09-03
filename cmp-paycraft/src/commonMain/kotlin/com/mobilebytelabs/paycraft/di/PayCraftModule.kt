@@ -4,6 +4,7 @@ import com.mobilebytelabs.paycraft.PayCraft
 import com.mobilebytelabs.paycraft.billing.NativeBillingClient
 import com.mobilebytelabs.paycraft.billing.WebCheckoutNativeBillingClient
 import com.mobilebytelabs.paycraft.billing.platformDefaultNativeBillingClient
+import com.mobilebytelabs.paycraft.config.ConfigCache
 import com.mobilebytelabs.paycraft.core.BillingManager
 import com.mobilebytelabs.paycraft.core.EntitlementRepository
 import com.mobilebytelabs.paycraft.core.PayCraftBillingManager
@@ -14,6 +15,7 @@ import com.mobilebytelabs.paycraft.network.PayCraftServiceImpl
 import com.mobilebytelabs.paycraft.persistence.EntitlementCache
 import com.mobilebytelabs.paycraft.persistence.SettingsEntitlementDao
 import com.mobilebytelabs.paycraft.ui.PayCraftPaywallViewModel
+import com.russhwolf.settings.Settings
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
@@ -102,6 +104,14 @@ val PayCraftModule = module {
             nativeBillingClient = get(),
         )
     }
+
+    /**
+     * Persistent config cache (RT-2). Shipped unused since it was written — the inline fetch in
+     * PayCraft.kt decoded straight into memory with a "persistent cache is a TODO" note, so the
+     * SDK's offline story existed only on paper. Wiring it here is what makes a cold or offline
+     * start render real products instead of a skeleton.
+     */
+    single { ConfigCache(Settings()) }
 
     single<HttpClient> {
         HttpClient {

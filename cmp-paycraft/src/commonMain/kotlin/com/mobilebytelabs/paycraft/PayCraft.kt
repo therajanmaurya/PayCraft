@@ -4,6 +4,7 @@ import com.mobilebytelabs.paycraft.billing.CheckoutLane
 import com.mobilebytelabs.paycraft.billing.NativeBillingClient
 import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
 import com.mobilebytelabs.paycraft.billing.resolveCheckoutLane
+import com.mobilebytelabs.paycraft.config.ConfigCache
 import com.mobilebytelabs.paycraft.config.CouponDto
 import com.mobilebytelabs.paycraft.config.ProductDto
 import com.mobilebytelabs.paycraft.config.ProviderDto
@@ -40,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -314,13 +316,18 @@ object PayCraft {
                 },
             )
 
-            // Kick off the async SuiteConfig fetch AND products prefetch (AC-8) from the
-            // backend's /config endpoint. Fire-and-forget — initialize() returns immediately
-            // without awaiting the network round-trip. On repeat opens the paywall Content
-            // branch composes on the first frame from the multiplatform-settings offline
-            // cache and the shimmer never appears; cold-cache opens see the layout-matched
-            // PaywallSkeleton exactly once until this prefetch completes and republishes.
-            // ConfigClient handles the cache fallback for offline-graceful degradation.
+            // Publish the last-known-good config from disk FIRST, synchronously. On repeat opens
+            // the paywall Content branch then composes on its first frame and the skeleton never
+            // appears; an offline launch still shows what the user could buy last time.
+            //
+            // This is what the SDK claimed to do and did not: the cache class existed but nothing
+            // read or wrote it, so "warm cache" only ever held within a single process and every
+            // first open of the day rendered the skeleton.
+            applyCachedSuiteConfig()
+
+            // Then revalidate from the backend's /config endpoint. Fire-and-forget — initialize()
+            // returns immediately without awaiting the network round-trip; a genuinely cold cache
+            // sees the layout-matched PaywallSkeleton exactly once until this republishes.
             configFetchJob?.cancel()
             configFetchJob = applicationScope.launch { prefetchProducts() }
         }
@@ -366,17 +373,7 @@ object PayCraft {
      * accept a Settings via initialize() options.
      */
     private suspend fun fetchAndApplySuiteConfig(apiKey: String, backend: PayCraftBackend, options: InitOptions) {
-        val http = HttpClient {
-            install(ContentNegotiation) {
-                json(
-                    Json {
-                        ignoreUnknownKeys = true
-                        explicitNulls = false
-                        isLenient = true
-                    },
-                )
-            }
-        }
+        val http = configHttpClient()
         try {
             // Re-resolve the country HERE (async fetch time), not the value cached in
             // initialize(). The Android Context that backs SIM-country detection is wired by
@@ -442,6 +439,10 @@ object PayCraft {
                 serverGeo = cfg.geoCountry,
             )
             applySuiteConfig(cfg)
+            // Persist for the NEXT cold start. Without this the "warm cache skips the skeleton"
+            // path only held within a single process: every first open of the day showed the
+            // skeleton, and a launch with no network rendered no products at all.
+            configCacheOrNull()?.let { runCatching { it.write(cfg) } }
             PayCraftLogger.onFlow("loadConfig", "cloud fetch ok — ${cfg.products.size} products")
             // Now that products (and their store product ids) are loaded, ask the native store for
             // its OWN localized price per product and re-apply so the paywall shows the store truth
@@ -452,9 +453,72 @@ object PayCraft {
             throw e
         } catch (e: Throwable) {
             PayCraftLogger.onError("loadConfig", e.message)
-        } finally {
-            http.close()
         }
+        // NOTE: deliberately no http.close() here — the client is process-scoped and shared (see
+        // [configHttpClient]). It is closed once, in [shutdown].
+    }
+
+    /**
+     * The ONE HTTP client every config fetch uses.
+     *
+     * Previously each fetch built and tore down its own client. That was correct (it closed in a
+     * `finally`) but wasteful: a fresh engine and connection pool per call, so no connection reuse
+     * across fetches. Realtime made that matter — a config ping triggers a refetch, so an active
+     * dashboard editing session churned one engine per save. Prefers the Koin singleton and falls
+     * back to a locally-owned client for callers that fetch before the graph is up.
+     */
+    private fun configHttpClient(): HttpClient {
+        KoinPlatform.getKoinOrNull()?.getOrNull<HttpClient>()?.let { return it }
+        return ownedHttpClient ?: HttpClient {
+            install(ContentNegotiation) {
+                json(
+                    Json {
+                        ignoreUnknownKeys = true
+                        explicitNulls = false
+                        isLenient = true
+                    },
+                )
+            }
+        }.also { ownedHttpClient = it }
+    }
+
+    /** Non-null only when the SDK had to build its own client (Koin not yet available). */
+    private var ownedHttpClient: HttpClient? = null
+
+    /**
+     * How long a config ping waits before refetching, so a burst of dashboard saves (each firing
+     * its own broadcast) collapses into ONE fetch instead of N racing ones. Short enough that an
+     * edit still feels live.
+     */
+    private const val CONFIG_PING_DEBOUNCE_MS = 400L
+
+    /**
+     * The persistent [ConfigCache], or null when no [com.russhwolf.settings.Settings] is available.
+     *
+     * `ConfigCache` shipped long before this and was never wired to anything — the inline fetch
+     * carried a "persistent cache is a TODO" note and decoded straight into memory. So the SDK had
+     * an offline story on paper and none in practice.
+     */
+    private fun configCacheOrNull(): ConfigCache? =
+        runCatching { KoinPlatform.getKoinOrNull()?.getOrNull<ConfigCache>() }.getOrNull()
+
+    /**
+     * Publish the last-known-good config from disk, synchronously, before any network call.
+     *
+     * Turns a cold start into a warm one: the paywall renders real products on its first frame
+     * instead of a skeleton, and an app launched with no connectivity still shows what the user
+     * could buy last time. The cloud fetch continues in the background and republishes.
+     *
+     * Never overwrites a config already resolved this process — a live value always wins over disk.
+     */
+    private fun applyCachedSuiteConfig() {
+        if (_suiteConfigFlow.value != null) return
+        val cached = configCacheOrNull()?.let { runCatching { it.read() }.getOrNull() } ?: return
+        applySuiteConfig(cached)
+        PayCraftLogger.onFlow(
+            "loadConfig",
+            "warm start from persisted cache — ${cached.products.size} products (revalidating)",
+        )
     }
 
     /** The Koin-resolved native billing client (Play on Android / StoreKit2 on iOS), or null. */
@@ -564,7 +628,15 @@ object PayCraft {
         val koin = KoinPlatform.getKoinOrNull() ?: return
         val realtime = koin.getOrNull<PayCraftRealtime>() ?: return
         realtime.ensureConfigChannel(tenantId) {
-            configFetchJob = applicationScope.launch { runCatching { prefetchProducts() } }
+            // Cancel first — refreshConfig() has always done this, the ping path never did, so a
+            // burst of dashboard saves left parallel fetches racing to publish onto the same
+            // StateFlow and the paywall could settle on the LOSER's (stale) payload.
+            // The small debounce collapses that burst into one refetch.
+            configFetchJob?.cancel()
+            configFetchJob = applicationScope.launch {
+                delay(CONFIG_PING_DEBOUNCE_MS)
+                runCatching { prefetchProducts() }
+            }
         }
         refreshRealtimeIdentity()
     }
@@ -579,6 +651,17 @@ object PayCraft {
      * SuiteConfig (hence tenant_id) has landed. Best-effort; failures leave the
      * TTL/foreground sync as the fallback.
      */
+    /**
+     * Force the realtime channels to rebuild — called on app foreground.
+     *
+     * Best-effort and safe to call when realtime was never started; the TTL/foreground sync
+     * remains the fallback either way.
+     */
+    internal fun resubscribeRealtime() {
+        val koin = KoinPlatform.getKoinOrNull() ?: return
+        runCatching { koin.getOrNull<PayCraftRealtime>()?.resubscribe() }
+    }
+
     internal fun refreshRealtimeIdentity() {
         val tenantId = suiteConfig?.tenantId ?: return
         val koin = KoinPlatform.getKoinOrNull() ?: return

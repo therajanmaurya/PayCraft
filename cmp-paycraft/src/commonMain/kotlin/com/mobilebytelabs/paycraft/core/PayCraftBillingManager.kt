@@ -757,6 +757,9 @@ class PayCraftBillingManager(
      * FRESH sibling ([EntitlementRepository.streamFresh], S5-DUAL). No-op when [repo] is unwired.
      */
     fun onForeground(appUserId: String) {
+        // A socket dropped during background still LOOKS present, so realtime would silently stay
+        // dead and only the TTL fallback would remain. Force both channels to rebuild.
+        PayCraft.resubscribeRealtime()
         // Foreground is the other moment a purchase may have resolved while we were not running
         // (a pending payment clearing, an Ask-to-Buy approval, an acknowledgement that failed
         // last session and is now inside Play's 72-hour auto-refund window).
