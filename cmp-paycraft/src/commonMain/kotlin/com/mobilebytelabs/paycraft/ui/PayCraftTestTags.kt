@@ -4,6 +4,9 @@ object PayCraftTestTags {
     // Screen-level containers
     const val PAYWALL_SCREEN = "paycraft_paywall_screen"
     const val PAYWALL_CONTENT = "paycraft_paywall_content"
+
+    /** The ModalBottomSheet hosting the paywall (PayCraftPaywallSheet) — owns scrim + chrome. */
+    const val PAYWALL_SHEET = "paycraft_paywall_sheet"
     const val PREMIUM_STATUS_SCREEN = "paycraft_premium_status_screen"
 
     // Loading / states

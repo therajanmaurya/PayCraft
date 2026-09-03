@@ -1,10 +1,8 @@
 package com.mobilebytelabs.paycraft.presentation.templates
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -16,6 +14,7 @@ import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.presentation.components.PlanCard
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
+import com.mobilebytelabs.paycraft.ui.paywallRoot
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsLight
 
 /**
@@ -25,11 +24,7 @@ import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsLight
 @Composable
 fun MinimalTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit) {
     val bg = PayCraftBrandColorsLight.background
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(bg),
-    ) {
+    Box(Modifier.paywallRoot(bg)) {
         when (state) {
             is BillingState.Loading -> MinimalLoading()
             is BillingState.Free -> MinimalFree(products, onPick)

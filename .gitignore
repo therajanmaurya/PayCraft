@@ -129,3 +129,14 @@ supabase/migrations/*
 !supabase/migrations/083_rpc_tenant_ownership_guards.sql
 !supabase/migrations/084_rpc_guard_allow_backend.sql
 !supabase/migrations/085_sync_events.sql
+
+# Materialized secrets — RULE-SECRETS-VAULT-001 (SV18/SV32).
+# These are `/secrets pull` outputs, never source. Committing one is a leak that
+# survives deletion and forces a rotation.
+secrets.local.json
+secrets.local.toml
+**/secrets.local.json
+**/secrets.local.toml
+
+# Local CI scratch marker (not source).
+__ci_only__

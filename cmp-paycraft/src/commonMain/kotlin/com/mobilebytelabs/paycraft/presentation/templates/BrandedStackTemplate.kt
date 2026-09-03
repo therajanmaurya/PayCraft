@@ -37,9 +37,12 @@ import com.mobilebytelabs.paycraft.config.PaywallDto
 import com.mobilebytelabs.paycraft.config.ValuePropTriple
 import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Product
+import com.mobilebytelabs.paycraft.ui.LocalPayCraftPaywallFooterActions
 import com.mobilebytelabs.paycraft.ui.ProductList
 import com.mobilebytelabs.paycraft.ui.components.rememberHeroIconOverride
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
+import com.mobilebytelabs.paycraft.ui.paywallContentSize
+import com.mobilebytelabs.paycraft.ui.paywallRoot
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftTheme
 
 /**
@@ -67,11 +70,9 @@ fun BrandedStackTemplate(
     onRetry: () -> Unit,
 ) {
     val tokens = PayCraftTheme
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(tokens.colors.surface),
-    ) {
+    // Bounds + background belong to whoever hosts us: full-screen → we paint; sheet → the sheet
+    // paints (and keeps its scrim, so the host app stays visible behind it). See paywallRoot.
+    Box(Modifier.paywallRoot(tokens.colors.surface)) {
         when (state) {
             is BillingState.Loading -> BrandedStackLoading()
             is BillingState.Free -> BrandedStackFree(products, onPickProduct)
@@ -93,7 +94,7 @@ private fun BrandedStackFree(products: List<Product>, onPickProduct: (Product) -
 
     Column(
         modifier = Modifier
-            .fillMaxSize()
+            .paywallContentSize()
             .verticalScroll(scrollState)
             .padding(horizontal = 20.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -143,6 +144,9 @@ private fun BrandedStackFree(products: List<Product>, onPickProduct: (Product) -
 @Composable
 private fun PaywallMicroFooter(paywall: PaywallDto) {
     val tokens = PayCraftTheme
+    // Real handlers supplied by the hosting paywall surface — these three used to be empty
+    // lambdas, i.e. tappable text that did nothing on every shipped paywall.
+    val footerActions = LocalPayCraftPaywallFooterActions.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -151,16 +155,16 @@ private fun PaywallMicroFooter(paywall: PaywallDto) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (!paywall.privacyUrl.isNullOrBlank()) {
-            FooterLink(label = "PRIVACY", onClick = { /* host opens via custom intent */ })
+            FooterLink(label = "PRIVACY", onClick = footerActions.onOpenPrivacy)
             FooterDot()
         }
         if (!paywall.termsUrl.isNullOrBlank()) {
-            FooterLink(label = "TERMS", onClick = { /* host opens via custom intent */ })
+            FooterLink(label = "TERMS", onClick = footerActions.onOpenTerms)
             FooterDot()
         }
         FooterLink(
             label = paywall.restoreLabel.uppercase(),
-            onClick = { /* host wires onRestoreTap via PayCraftPaywallSheet */ },
+            onClick = footerActions.onRestore,
         )
     }
     BrandingFooterLine(branding = paywall.branding, customFooter = paywall.customFooter)

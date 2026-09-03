@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -20,6 +22,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -44,9 +48,11 @@ import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.model.ProductMapper
 import com.mobilebytelabs.paycraft.presentation.PaywallTemplate
 import com.mobilebytelabs.paycraft.presentation.ProviderBottomSheet
+import com.mobilebytelabs.paycraft.presentation.ProviderPickerContent
 import com.mobilebytelabs.paycraft.provider.StripeProvider
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftThemeProvider
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -93,6 +99,7 @@ fun PayCraftPaywallComposable(
     onDismiss: () -> Unit = {},
     displayMode: DisplayMode = DisplayMode.FullScreen,
     modifier: Modifier = Modifier,
+    surfaceMode: PayCraftSurfaceMode = PayCraftSurfaceMode.FullScreen,
     viewModel: PayCraftPaywallViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -114,71 +121,180 @@ fun PayCraftPaywallComposable(
     // and the paywall recomposes without a cold relaunch (AC-3).
     val liveConfig = LocalPayCraftConfig.current ?: PayCraft.suiteConfigFlow.collectAsState().value
 
-    PayCraftThemeProvider(config = liveConfig) {
-        when (displayMode) {
-            DisplayMode.Banner -> BannerPaywall(
-                state = state.billingState,
-                onTap = onDismiss,
-                modifier = modifier,
-            )
-            DisplayMode.FullScreen -> PayCraftPaywallFullScreenSurface(
-                state = state,
-                config = liveConfig,
-                snackbarHostState = snackbarHostState,
-                onAction = viewModel::dispatch,
-                modifier = modifier,
-            )
-        }
+    // Footer affordances the templates render but cannot wire themselves (they receive no action
+    // channel). Privacy/Terms open the tenant's configured URLs; Restore drives the SDK action.
+    val uriHandler = LocalUriHandler.current
+    val privacyUrl = liveConfig?.paywall?.privacyUrl
+    val termsUrl = liveConfig?.paywall?.termsUrl
+    val footerActions = remember(privacyUrl, termsUrl, uriHandler, viewModel) {
+        PayCraftPaywallFooterActions(
+            onOpenPrivacy = {
+                privacyUrl?.takeIf { it.isNotBlank() }?.let { runCatching { uriHandler.openUri(it) } }
+            },
+            onOpenTerms = {
+                termsUrl?.takeIf { it.isNotBlank() }?.let { runCatching { uriHandler.openUri(it) } }
+            },
+            onRestore = { viewModel.dispatch(PayCraftPaywallAction.OpenRestoreSheet) },
+        )
+    }
 
-        // Provider-picker bottom sheet — floats above every display mode so a plan tap
-        // in either FullScreen or Banner mode surfaces the picker uniformly. Preserved
-        // verbatim from the retired v1 hand-built content branch.
-        val sheetTarget = state.providerSheetTarget
-        if (sheetTarget != null) {
-            ProviderBottomSheet(
-                providers = state.suiteProviders,
-                selectedPlan = sheetTarget,
-                maxVisible = 4,
-                onProviderPicked = { provider ->
-                    viewModel.dispatch(PayCraftPaywallAction.CheckoutWithProvider(sheetTarget, provider))
-                },
-                onDismiss = { viewModel.dispatch(PayCraftPaywallAction.DismissProviderSheet) },
-            )
-        }
+    CompositionLocalProvider(
+        LocalPayCraftSurfaceMode provides surfaceMode,
+        LocalPayCraftPaywallFooterActions provides footerActions,
+    ) {
+        PayCraftThemeProvider(config = liveConfig) {
+            val sheetTarget = state.providerSheetTarget
+            val restoreVisible = state.isRestoreSheetVisible
 
-        // Restore-purchases modal sheet — triggered by the legal-footer RESTORE
-        // link (via PayCraftPaywallAction.OpenRestoreSheet) or by the host app opening
-        // the sheet directly. OAuth handlers stay null at the SDK layer — consumer apps
-        // wire them via PayCraftPaywallSheet/PayCraftPaywall overloads.
-        PayCraftRestore(
-            visible = state.isRestoreSheetVisible,
-            onDismiss = { viewModel.dispatch(PayCraftPaywallAction.CloseRestoreSheet) },
+            // A secondary surface (provider picker / restore) is showing. How we present it depends
+            // entirely on whether WE are already inside a modal window:
+            //  - Sheet mode  → swap it into the SAME sheet. Opening a second ModalBottomSheet from
+            //    inside one stacks two scrims and two windows (UI-3), which is what made the host
+            //    app disappear behind an opaque layer.
+            //  - FullScreen  → we are a screen, not a sheet, so a real modal sheet on top is right.
+            val secondary: (@Composable () -> Unit)? = when {
+                sheetTarget != null -> {
+                    {
+                        ProviderPickerContent(
+                            providers = state.suiteProviders,
+                            selectedPlan = sheetTarget,
+                            maxVisible = 4,
+                            onProviderPicked = { provider ->
+                                viewModel.dispatch(
+                                    PayCraftPaywallAction.CheckoutWithProvider(sheetTarget, provider),
+                                )
+                            },
+                        )
+                    }
+                }
+                restoreVisible -> {
+                    {
+                        PayCraftRestoreContent(
+                            billingManager = koinInject(),
+                            onCancel = { viewModel.dispatch(PayCraftPaywallAction.CloseRestoreSheet) },
+                            onSuccess = { viewModel.dispatch(PayCraftPaywallAction.CloseRestoreSheet) },
+                        )
+                    }
+                }
+                else -> null
+            }
+
+            if (surfaceMode == PayCraftSurfaceMode.Sheet && secondary != null) {
+                // ONE modal window: the secondary surface replaces the paywall body in place.
+                secondary()
+            } else {
+                PayCraftPaywallBody(
+                    state = state,
+                    config = liveConfig,
+                    displayMode = displayMode,
+                    surfaceMode = surfaceMode,
+                    snackbarHostState = snackbarHostState,
+                    onDismiss = onDismiss,
+                    onAction = viewModel::dispatch,
+                    modifier = modifier,
+                )
+            }
+
+            if (surfaceMode == PayCraftSurfaceMode.FullScreen) {
+                // Provider-picker modal — floats above every display mode so a plan tap in either
+                // FullScreen or Banner mode surfaces the picker uniformly.
+                if (sheetTarget != null) {
+                    ProviderBottomSheet(
+                        providers = state.suiteProviders,
+                        selectedPlan = sheetTarget,
+                        maxVisible = 4,
+                        onProviderPicked = { provider ->
+                            viewModel.dispatch(
+                                PayCraftPaywallAction.CheckoutWithProvider(sheetTarget, provider),
+                            )
+                        },
+                        onDismiss = { viewModel.dispatch(PayCraftPaywallAction.DismissProviderSheet) },
+                    )
+                }
+
+                // Restore-purchases modal — triggered by the legal-footer RESTORE link (via
+                // PayCraftPaywallAction.OpenRestoreSheet) or by the host opening it directly.
+                // OAuth handlers stay null at the SDK layer — consumer apps wire them via the
+                // PayCraftPaywallSheet / PayCraftPaywall overloads.
+                PayCraftRestore(
+                    visible = restoreVisible,
+                    onDismiss = { viewModel.dispatch(PayCraftPaywallAction.CloseRestoreSheet) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The paywall body — Banner strip, or the Scaffold render path (close-button top bar + optional
+ * test-mode chip + [PaywallTemplate.render], BrandedStackTemplate by default).
+ *
+ * Extracted so [PayCraftPaywallComposable] can choose between paywall body and a secondary
+ * surface without duplicating the display-mode branch.
+ */
+@Composable
+private fun PayCraftPaywallBody(
+    state: PayCraftPaywallState,
+    config: SuiteConfig?,
+    displayMode: DisplayMode,
+    surfaceMode: PayCraftSurfaceMode,
+    snackbarHostState: SnackbarHostState,
+    onDismiss: () -> Unit,
+    onAction: (PayCraftPaywallAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    when (displayMode) {
+        DisplayMode.Banner -> BannerPaywall(
+            state = state.billingState,
+            onTap = onDismiss,
+            modifier = modifier,
+        )
+        DisplayMode.FullScreen -> PayCraftPaywallSurface(
+            state = state,
+            config = config,
+            snackbarHostState = snackbarHostState,
+            onAction = onAction,
+            surfaceMode = surfaceMode,
+            modifier = modifier,
         )
     }
 }
 
 /**
- * FullScreen render path — Scaffold + close-button top bar + optional test-mode chip
- * + [PaywallTemplate.render] (BrandedStackTemplate by default). Extracted so
- * [PayCraftPaywallComposable] can pick between FullScreen and Banner presentation
- * without a nested Scaffold in the Banner branch.
+ * Scaffold render path for [DisplayMode.FullScreen].
+ *
+ * [surfaceMode] decides who owns bounds and background, and it is the whole fix for the
+ * "paywall goes blank behind the sheet" bug:
+ *  - [PayCraftSurfaceMode.FullScreen] — we own the window: `fillMaxSize()` + an opaque container.
+ *  - [PayCraftSurfaceMode.Sheet] — the hosting [androidx.compose.material3.ModalBottomSheet] owns
+ *    bounds, shape, background AND scrim. We fill width, wrap height (capped so a tall paywall
+ *    still leaves the host visible above the sheet), and keep the container TRANSPARENT. A
+ *    `fillMaxSize()` + opaque container here expands the sheet to the full window and paints over
+ *    the scrim, which is exactly what made the background go blank.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PayCraftPaywallFullScreenSurface(
+private fun PayCraftPaywallSurface(
     state: PayCraftPaywallState,
     config: SuiteConfig?,
     snackbarHostState: SnackbarHostState,
     onAction: (PayCraftPaywallAction) -> Unit,
+    surfaceMode: PayCraftSurfaceMode,
     modifier: Modifier = Modifier,
 ) {
+    val isSheet = surfaceMode == PayCraftSurfaceMode.Sheet
+    val sizing = if (isSheet) {
+        Modifier.fillMaxWidth().wrapContentHeight().heightIn(max = SHEET_MAX_HEIGHT)
+    } else {
+        Modifier.fillMaxSize()
+    }
     Scaffold(
         modifier = modifier
-            .fillMaxSize()
+            .then(sizing)
             .testTag(PayCraftTestTags.PAYWALL_SCREEN),
         // Sheet callers set zero insets so the sheet handles insets itself.
         contentWindowInsets = WindowInsets(0.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = if (isSheet) Color.Transparent else MaterialTheme.colorScheme.surface,
         topBar = {
             TopAppBar(
                 title = { /* Template renders its own hero title — top bar stays chromeless. */ },
@@ -198,7 +314,8 @@ private fun PayCraftPaywallFullScreenSurface(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         val isTestMode = (PayCraft.config?.provider as? StripeProvider)?.isTestMode == true
-        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        val contentSizing = if (isSheet) Modifier.fillMaxWidth() else Modifier.fillMaxSize()
+        Column(modifier = contentSizing.padding(innerPadding)) {
             if (isTestMode) {
                 Box(
                     modifier = Modifier
@@ -289,3 +406,10 @@ private fun Product.toBillingPlan(config: SuiteConfig?): BillingPlan {
         trialDays = trialDays,
     )
 }
+
+/**
+ * Height ceiling for the paywall when hosted in a bottom sheet. Leaves a strip of the host app
+ * (and its scrim) visible above the sheet, so it reads as a sheet over the app rather than an
+ * opaque takeover — even when the template's content is taller than the screen.
+ */
+private val SHEET_MAX_HEIGHT = 720.dp

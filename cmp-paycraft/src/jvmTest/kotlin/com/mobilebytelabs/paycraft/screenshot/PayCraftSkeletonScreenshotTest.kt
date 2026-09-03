@@ -39,14 +39,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
 import com.mobilebytelabs.paycraft.config.PaywallDto
 import com.mobilebytelabs.paycraft.config.SuiteConfig
@@ -54,6 +63,8 @@ import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.Money
 import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.presentation.templates.BrandedStackTemplate
+import com.mobilebytelabs.paycraft.ui.LocalPayCraftSurfaceMode
+import com.mobilebytelabs.paycraft.ui.PayCraftSurfaceMode
 import com.mobilebytelabs.paycraft.ui.ProductList
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftThemeProvider
@@ -114,6 +125,68 @@ class PayCraftSkeletonScreenshotTest {
     }
 
     /**
+     * Golden #4 — the UI-1/UI-2 fix, rendered.
+     *
+     * Composes the branded paywall in [PayCraftSurfaceMode.Sheet] over a magenta stand-in for the
+     * "host app", inside a fixed-height window. Before the fix the template declared
+     * `fillMaxSize().background(surface)`, so it painted edge to edge and NO magenta survived —
+     * which is exactly what the user saw as "the background goes blank".
+     *
+     * The golden therefore carries visible host colour above the paywall. The accompanying
+     * assertion is structural: the paywall must occupy strictly less than the full window height.
+     */
+    @Test
+    fun sheet_mode_leaves_host_visible_render() = runComposeUiTest {
+        setContent {
+            Box(
+                modifier = Modifier
+                    .size(SHEET_GOLDEN_WIDTH, SHEET_GOLDEN_HEIGHT)
+                    .background(HOST_APP_STAND_IN)
+                    .testTag(HOST_TAG),
+            ) {
+                CompositionLocalProvider(
+                    LocalPayCraftSurfaceMode provides PayCraftSurfaceMode.Sheet,
+                ) {
+                    // Stands in for the real ModalBottomSheet container: it — not the paywall —
+                    // owns shape and background. PayCraftPaywallSheet passes exactly these
+                    // (PayCraftTheme.colors.surface + a 28.dp top radius).
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                            .background(Color.White)
+                            .testTag(SHEET_PAYWALL_TAG),
+                    ) {
+                        UnsizedPayCraftTheme(config = deterministicSuiteConfig()) {
+                            // ONE product keeps the composition short enough that the host
+                            // window is genuinely taller than the paywall — which is the whole
+                            // point of the capture.
+                            BrandedStackTemplate(
+                                state = BillingState.Free,
+                                products = deterministicProducts().take(1),
+                                onPickProduct = { /* deterministic no-op */ },
+                                onRetry = { /* deterministic no-op */ },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        val hostHeight = onNodeWithTag(HOST_TAG).getUnclippedBoundsInRoot().height
+        val paywallHeight = onNodeWithTag(SHEET_PAYWALL_TAG).getUnclippedBoundsInRoot().height
+
+        onRoot().captureRoboImage("src/jvmTest/resources/screenshots/paywall_sheet_over_host.png")
+        assertCapturedFileExists("src/jvmTest/resources/screenshots/paywall_sheet_over_host.png")
+        assertTrue(
+            paywallHeight < hostHeight,
+            "A sheet-mode paywall must leave host window visible above it — measured " +
+                "paywall=$paywallHeight host=$hostHeight. Equal heights mean the paywall is " +
+                "still painting edge-to-edge, i.e. the UI-1/UI-2 regression is back.",
+        )
+    }
+
+    /**
      * Golden #3 — `ui/ProductList.kt` in isolation: three plans (monthly + annual with
      * savings badge + trial), the annual plan marked recommended (`recommendedSku =
      * "annual"`), the CTA pinned. Isolating the surface protects the addressable
@@ -151,6 +224,23 @@ class PayCraftSkeletonScreenshotTest {
      * fixed scheme (this is the exact `config-wins-else-host-inherit` path AC-2
      * documents; a null `config` here means the host-inherit branch is exercised).
      */
+    /**
+     * Theme + config providers WITHOUT the fixed-size opaque box [DeterministicPayCraftTheme]
+     * imposes.
+     *
+     * The sized wrapper is right for the standalone goldens (it pins a phone-shaped frame), but it
+     * would defeat the sheet-over-host capture: a 411×891 opaque Box fills and paints the window
+     * regardless of what the paywall inside it does, so the capture could never show the host.
+     */
+    @Composable
+    private fun UnsizedPayCraftTheme(config: SuiteConfig, content: @Composable () -> Unit) {
+        MaterialTheme(colorScheme = lightColorScheme()) {
+            CompositionLocalProvider(LocalPayCraftConfig provides config) {
+                PayCraftThemeProvider(config = config, content = content)
+            }
+        }
+    }
+
     @Composable
     private fun DeterministicPayCraftTheme(config: SuiteConfig? = null, content: @Composable () -> Unit) {
         MaterialTheme(colorScheme = lightColorScheme()) {
@@ -239,3 +329,16 @@ class PayCraftSkeletonScreenshotTest {
         )
     }
 }
+
+/** Fixed window for the sheet-over-host golden. */
+private val SHEET_GOLDEN_WIDTH = 400.dp
+private val SHEET_GOLDEN_HEIGHT = 768.dp
+
+/**
+ * Stand-in for the host application behind the sheet. Deliberately loud: any pixel of it that
+ * survives in the golden is proof the paywall did NOT paint over its container.
+ */
+private val HOST_APP_STAND_IN = Color(0xFFCC00AA)
+
+private const val HOST_TAG = "screenshot_host_app"
+private const val SHEET_PAYWALL_TAG = "screenshot_sheet_paywall"
