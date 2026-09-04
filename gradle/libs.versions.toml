@@ -34,7 +34,10 @@ store5 = "5.1.0-alpha08"
 sqldelight = "2.1.0"
 # Google Play Billing Library v8 — native Android IAP client (Phase 3, D8/D13). v8 is required
 # for all new apps by 2026-08-31 (GOAL Risks); billing-ktx bundles the suspend query extensions.
-google-billing = "8.0.0"
+# 8.3.0 is the latest 8.x. No transitive shift across 8.0.0→8.3.0 (kotlin-stdlib 2.2.10 +
+# kotlinx-coroutines-core 1.6.0 throughout). A 9.x line exists; staying on 8.x deliberately —
+# 8.x already satisfies the Play requirement and 9.x is a separate migration.
+google-billing = "8.3.0"
 # Roborazzi — device-free Compose Desktop (Skiko) golden render for AC-15 (03-shimmer-productlist).
 # jvmTest ONLY (never commonTest — Skiko-desktop artifact leaks would break js/wasm/ios compile).
 # 1.67.0 is the proven baseline (memory: roborazzi-desktop-render-tier-recipe, 2026-08-06).

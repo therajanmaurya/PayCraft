@@ -121,6 +121,34 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         val detailsParams = BillingFlowParams.ProductDetailsParams.newBuilder()
             .setProductDetails(productDetails)
         if (productType == NativeProductType.SUBSCRIPTION) {
+            // Plan change (PB-6): an existing active subscription means this is an UPGRADE or
+            // DOWNGRADE, not a new purchase. Without replacement params Play either errors or
+            // leaves the buyer paying for two subscriptions at once.
+            //
+            // Billing 8.3.0 moved this from flow-level BillingFlowParams.SubscriptionUpdateParams
+            // (deprecated) onto the per-product params, keyed by the old PRODUCT ID rather than its
+            // purchase token — so a multi-product flow can specify replacement per line.
+            activeSubscriptionProductId(exceptProductId = productId)?.let { oldProductId ->
+                detailsParams.setSubscriptionProductReplacementParams(
+                    BillingFlowParams.ProductDetailsParams.SubscriptionProductReplacementParams
+                        .newBuilder()
+                        .setOldProductId(oldProductId)
+                        // CHARGE_PRORATED_PRICE: the buyer is charged the difference now and the
+                        // renewal date is preserved. The safe default for an upgrade; Play refuses
+                        // it for a downgrade, which then surfaces as a normal billing error rather
+                        // than a silent double-charge.
+                        .setReplacementMode(
+                            BillingFlowParams.ProductDetailsParams
+                                .SubscriptionProductReplacementParams
+                                .ReplacementMode.CHARGE_PRORATED_PRICE,
+                        )
+                        .build(),
+                )
+                Logger.d("PlayBillingNativeClient") {
+                    "plan change: replacing $oldProductId with $productId"
+                }
+            }
+
             // Pick the BEST eligible offer rather than whichever Play listed first. Play returns
             // base plan + trial + intro + developer offers in a meaningless order, so
             // `firstOrNull()` made a configured free trial apply or not by chance.
@@ -139,28 +167,6 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                 // Bind the receipt to the app user so the server can attribute it. Play requires
                 // this to be non-identifying, so a hash — never the raw email — goes on the wire.
                 appUserId?.let { setObfuscatedAccountId(obfuscate(it)) }
-
-                // Plan change (PB-6): an existing active subscription means this is an UPGRADE or
-                // DOWNGRADE, not a new purchase. Without update params Play either errors or leaves
-                // the buyer paying for two subscriptions at once.
-                if (productType == NativeProductType.SUBSCRIPTION) {
-                    activeSubscriptionToken(exceptProductId = productId)?.let { oldToken ->
-                        setSubscriptionUpdateParams(
-                            BillingFlowParams.SubscriptionUpdateParams.newBuilder()
-                                .setOldPurchaseToken(oldToken)
-                                // CHARGE_PRORATED_PRICE: the buyer is charged the difference now
-                                // and the renewal date is preserved. The safe default for an
-                                // upgrade; Play refuses it for a downgrade, which then surfaces as
-                                // a normal billing error rather than a silent double-charge.
-                                .setSubscriptionReplacementMode(
-                                    BillingFlowParams.SubscriptionUpdateParams
-                                        .ReplacementMode.CHARGE_PRORATED_PRICE,
-                                )
-                                .build(),
-                        )
-                        Logger.d("PlayBillingNativeClient") { "plan change: replacing existing subscription" }
-                    }
-                }
             }
             .build()
 
@@ -309,8 +315,8 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
 
         if (productType == NativeProductType.ONE_TIME) {
             val offer = productDetails.oneTimePurchaseOfferDetails ?: return null
-            val currency = offer.priceCurrencyCode?.takeIf { it.isNotBlank() } ?: return null
-            val formatted = offer.formattedPrice?.takeIf { it.isNotBlank() } ?: return null
+            val currency = offer.priceCurrencyCode.takeIf { it.isNotBlank() } ?: return null
+            val formatted = offer.formattedPrice.takeIf { it.isNotBlank() } ?: return null
             return NativeDisplayPrice(formatted, currency, offer.priceAmountMicros)
         }
 
@@ -360,14 +366,14 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
     }
 
     /**
-     * The purchase token of an existing active subscription other than [exceptProductId] — the
-     * "old" side of a plan change. Null when the buyer has no subscription to replace.
+     * The product id of an existing active subscription other than [exceptProductId] — the "old"
+     * side of a plan change. Null when the buyer has no subscription to replace.
      */
-    private suspend fun activeSubscriptionToken(exceptProductId: String): String? =
+    private suspend fun activeSubscriptionProductId(exceptProductId: String): String? =
         runCatching { queryPurchasesOf(BillingClient.ProductType.SUBS) }
             .getOrDefault(emptyList())
             .firstOrNull { !it.isPending && it.productId.isNotBlank() && it.productId != exceptProductId }
-            ?.purchaseToken
+            ?.productId
 
     private fun NativeProductType.toPlayType(): String = when (this) {
         NativeProductType.SUBSCRIPTION -> BillingClient.ProductType.SUBS
