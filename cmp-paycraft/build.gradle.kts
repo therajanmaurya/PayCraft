@@ -131,7 +131,7 @@ kotlin {
             // before Application.onCreate runs — see PayCraftInitializer.kt.
             implementation("androidx.startup:startup-runtime:1.2.0")
             // Google Play Billing v8 — native Android IAP client (Phase 3, D8/D13).
-            // PlayBillingNativeClient wraps BillingClient v8 (billing/NativeBillingClient.android.kt).
+            // PlayBillingNativeClient wraps BillingClient v9 (billing/NativeBillingClient.android.kt).
             implementation(libs.google.billing.ktx)
         }
 

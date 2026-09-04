@@ -35,11 +35,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /**
- * Android [NativeBillingClient] over **Google Play Billing Library v8**
- * (`com.android.billingclient:billing-ktx:8.0.0`) — the Phase-3 native IAP client (D8/D13).
+ * Android [NativeBillingClient] over **Google Play Billing Library v9**
+ * (`com.android.billingclient:billing-ktx`, version pinned in `libs.versions.toml`) — the Phase-3
+ * native IAP client (D8/D13).
  *
- * v8 is required for all new apps by 2026-08-31 (GOAL Risks). This client is a *pure store
- * adapter* (D5): it drives the Play purchase / query / manage flows and emits [NativePurchase]
+ * v8+ is required for all new apps by 2026-08-31 (GOAL Risks); this client tracks the v9 line.
+ * It uses only the modern `ProductDetails` surface, never the SKU-era APIs (`SkuDetails`,
+ * `QueryPurchaseHistoryParams`, `BillingClient.SkuType`) that v9 REMOVED outright — which is why
+ * the 8.x→9.x move needed no code change here. This client is a *pure store adapter* (D5): it drives the Play purchase / query / manage flows and emits [NativePurchase]
  * records (product id + `purchaseToken` + order id) for the Phase-2 reconciliation engine to
  * validate server-side (`subscriptionsv2.get`). It NEVER decides entitlement truth.
  *
