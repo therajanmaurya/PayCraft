@@ -45,6 +45,45 @@ kotlin {
     iosArm64()
     iosSimulatorArm64()
 
+    // Swift-interop link path (supabase 3.8.0+).
+    //
+    // supabase-kt 3.8.0 pulls dev.whyoleg.cryptography's CryptoKit provider, whose cinterop klib
+    // is published with a HARDCODED Swift runtime search path of
+    // `/Applications/Xcode.app/.../usr/lib/swift/iphonesimulator`. On any machine where Xcode is
+    // installed under a versioned name (Xcode-26.5.0.app, Xcode-beta.app, /Volumes/..., or via
+    // xcodes/asdf) that directory does not exist, so the swiftCompatibility* archives are never
+    // found and linking dies with:
+    //
+    //   Undefined symbols: __swift_FORCE_LOAD_$_swiftCompatibility56
+    //
+    // The archives DO exist — just under the ACTIVE toolchain. Resolve that from `xcode-select -p`
+    // at configuration time and add it as an explicit -L, so the build works regardless of where
+    // Xcode lives. No-op when the directory is absent (non-Mac / no Xcode).
+    val swiftRuntimeSearchPaths: Map<String, File> =
+        runCatching {
+            val developerDir =
+                providers
+                    .exec {
+                        commandLine("xcode-select", "-p")
+                    }.standardOutput.asText
+                    .get()
+                    .trim()
+            val swiftLibRoot = File(developerDir, "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift")
+            mapOf(
+                "iosSimulatorArm64" to File(swiftLibRoot, "iphonesimulator"),
+                "iosArm64" to File(swiftLibRoot, "iphoneos"),
+            ).filterValues { it.isDirectory }
+        }.getOrDefault(emptyMap())
+
+    targets.withType(org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget::class.java).configureEach {
+        val swiftLibs = swiftRuntimeSearchPaths[name]
+        if (swiftLibs != null) {
+            binaries.all {
+                linkerOpts("-L${swiftLibs.absolutePath}")
+            }
+        }
+    }
+
     // macOS targets dropped 2026-07-24: Store5 (5.1.0-alpha08, the offline entitlement
     // cache from E4) publishes no macos_x64/macos_arm64 variant, so `commonMain`'s store5
     // dependency cannot resolve for macOS → "Compile All Targets" fails. macOS is not a
