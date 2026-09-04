@@ -1,17 +1,96 @@
-/**
- * PayCraft sample — Android application.
- *
- * Plain `com.android.application`, deliberately WITHOUT the Kotlin Multiplatform plugin: since
- * AGP 9.0 the two refuse to coexist. Everything multiplatform (shared Compose UI, plus the desktop
- * / iOS / wasmJs entry points) lives in `:sample-shared`; this module holds only what is genuinely
- * Android — `SampleApplication`, `MainActivity`, the manifest, resources, and the instrumented
- * tests that need a device.
- *
- * Kotlin comes from AGP 9's built-in Kotlin support, so no `kotlin-android` plugin is applied.
- */
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpackConfig
+
 plugins {
+    alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.android.application)
+    alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+}
+
+kotlin {
+    androidTarget {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        }
+    }
+
+    jvm("desktop")
+
+    // iosX64 REMOVED: :cmp-paycraft dropped it on 2026-08-26 (Compose MP 1.11+ publishes no
+    // iosX64 variant), so `:sample-app:compileKotlinIosX64` could not resolve project
+    // :cmp-paycraft and any "Compile All Targets" run failed. The declaration outlived the
+    // dependency it needed. Apple-Silicon simulators use iosSimulatorArm64; devices use iosArm64.
+    listOf(
+        iosArm64(),
+        iosSimulatorArm64(),
+    ).forEach { iosTarget ->
+        iosTarget.binaries.framework {
+            baseName = "SampleApp"
+            isStatic = true
+        }
+    }
+
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        outputModuleName = "sampleApp"
+        browser {
+            val rootDirPath = project.rootDir.path
+            val projectDirPath = project.projectDir.path
+            commonWebpackConfig {
+                outputFileName = "sampleApp.js"
+                devServer =
+                    (devServer ?: KotlinWebpackConfig.DevServer()).apply {
+                        static =
+                            (static ?: mutableListOf()).apply {
+                                add(rootDirPath)
+                                add(projectDirPath)
+                            }
+                    }
+            }
+        }
+        binaries.executable()
+    }
+
+    sourceSets {
+        val desktopMain by getting
+
+        androidMain.dependencies {
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.koin.android)
+        }
+
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation(libs.compose.ui.test.junit4)
+                implementation(libs.koin.test)
+                implementation(libs.koin.test.junit4)
+                implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.junit)
+            }
+        }
+
+        commonMain.dependencies {
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material3)
+            implementation(compose.ui)
+            implementation(compose.components.resources)
+            implementation(compose.components.uiToolingPreview)
+
+            // Include the library
+            implementation(project(":cmp-paycraft"))
+
+            // Koin (not transitive from cmp-paycraft)
+            implementation(libs.koin.core)
+            implementation(libs.koin.compose)
+        }
+
+        desktopMain.dependencies {
+            implementation(compose.desktop.currentOs)
+        }
+    }
 }
 
 android {
@@ -36,10 +115,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    buildFeatures {
-        compose = true
-    }
-
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -59,16 +134,17 @@ android {
 }
 
 dependencies {
-    // Shared sample UI + the PayCraft library (exposed via `api` from :sample-shared).
-    implementation(project(":sample-shared"))
-
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.koin.android)
-
-    androidTestImplementation(libs.compose.ui.test.junit4)
-    androidTestImplementation(libs.koin.test)
-    androidTestImplementation(libs.koin.test.junit4)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
-    androidTestImplementation(libs.junit)
     debugImplementation(libs.compose.ui.test.manifest)
+}
+
+compose.desktop {
+    application {
+        mainClass = "com.mobilebytelabs.paycraft.sample.MainKt"
+
+        nativeDistributions {
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "com.mobilebytelabs.paycraft.sample"
+            packageVersion = "1.0.0"
+        }
+    }
 }

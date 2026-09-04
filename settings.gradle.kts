@@ -16,4 +16,3 @@ dependencyResolutionManagement {
 rootProject.name = "paycraft"
 include(":cmp-paycraft")
 include(":sample-app")
-include(":sample-shared")
