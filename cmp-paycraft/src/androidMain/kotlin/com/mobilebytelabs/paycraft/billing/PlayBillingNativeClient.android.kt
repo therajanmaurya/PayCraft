@@ -147,7 +147,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                         )
                         .build(),
                 )
-                Logger.d("PlayBillingNativeClient") {
+                Logger.d(tag = "PlayBillingNativeClient") {
                     "plan change: replacing $oldProductId with $productId"
                 }
             }
@@ -159,7 +159,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
             val best = selectBestOffer(offers)
                 ?: return NativePurchaseResult.Failed("No subscription offer for $productId")
             detailsParams.setOfferToken(best.offerToken)
-            Logger.d("PlayBillingNativeClient") {
+            Logger.d(tag = "PlayBillingNativeClient") {
                 "offer selected for $productId: id=${best.offerId} trialDays=${best.freeTrialDays}"
             }
         }
@@ -228,7 +228,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                 .build(),
         )
         if (ack.responseCode != BillingResponseCode.OK) {
-            Logger.w("PlayBillingNativeClient") {
+            Logger.w(tag = "PlayBillingNativeClient") {
                 "acknowledgePurchase failed (${ack.responseCode}): ${ack.debugMessage} — " +
                     "will retry on the next reconcile (Play auto-refunds after 72h)"
             }
@@ -411,7 +411,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                 delay(CONNECT_BACKOFF_BASE_MS shl (attempt - 1))
             }
         }
-        Logger.w("PlayBillingNativeClient") {
+        Logger.w(tag = "PlayBillingNativeClient") {
             "Play billing connect failed after $attempt attempts: ${last.debugMessage}"
         }
         last

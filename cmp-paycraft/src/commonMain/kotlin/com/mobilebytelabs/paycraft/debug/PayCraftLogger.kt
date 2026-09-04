@@ -25,11 +25,11 @@ object PayCraftLogger {
 
     fun onInitialize(backendName: String, apiKeyPrefix: String, debug: Boolean) {
         if (!enabled) return
-        Logger.d(TAG) { "══ PayCraft.initialize() ════════════════════════════" }
-        Logger.d(TAG) { "  Backend  = $backendName" }
-        Logger.d(TAG) { "  API key  = $apiKeyPrefix" }
-        Logger.d(TAG) { "  Debug    = $debug" }
-        Logger.d(TAG) { "══════════════════════════════════════════════════════" }
+        Logger.d(tag = TAG) { "══ PayCraft.initialize() ════════════════════════════" }
+        Logger.d(tag = TAG) { "  Backend  = $backendName" }
+        Logger.d(tag = TAG) { "  API key  = $apiKeyPrefix" }
+        Logger.d(tag = TAG) { "  Debug    = $debug" }
+        Logger.d(tag = TAG) { "══════════════════════════════════════════════════════" }
     }
 
     fun onSuiteConfigApplied(
@@ -40,26 +40,26 @@ object PayCraftLogger {
         locale: String,
     ) {
         if (!enabled) return
-        Logger.d(TAG) { "══ PayCraft SuiteConfig applied ═════════════════════" }
-        Logger.d(TAG) { "  Source           = $source" }
-        Logger.d(TAG) { "  Products         = $productCount" }
-        Logger.d(TAG) { "  Providers        = $providerCount (primary=$primaryProvider)" }
-        Logger.d(TAG) { "  Locale           = $locale" }
-        Logger.d(TAG) { "  Filter: adb logcat -s \"PayCraft:D\" \"*:S\"" }
-        Logger.d(TAG) { "════════════════════════════════════════════════════" }
+        Logger.d(tag = TAG) { "══ PayCraft SuiteConfig applied ═════════════════════" }
+        Logger.d(tag = TAG) { "  Source           = $source" }
+        Logger.d(tag = TAG) { "  Products         = $productCount" }
+        Logger.d(tag = TAG) { "  Providers        = $providerCount (primary=$primaryProvider)" }
+        Logger.d(tag = TAG) { "  Locale           = $locale" }
+        Logger.d(tag = TAG) { "  Filter: adb logcat -s \"PayCraft:D\" \"*:S\"" }
+        Logger.d(tag = TAG) { "════════════════════════════════════════════════════" }
     }
 
     // ── Checkout ─────────────────────────────────────────────────────────────
 
     fun onCheckout(planId: String, mode: String, url: String) {
         if (!enabled) return
-        Logger.d(TAG) { "checkout — plan=$planId, mode=$mode" }
-        Logger.d(TAG) { "  Opening: $url" }
+        Logger.d(tag = TAG) { "checkout — plan=$planId, mode=$mode" }
+        Logger.d(tag = TAG) { "  Opening: $url" }
     }
 
     fun onManageSubscription(mode: String, url: String?) {
         if (!enabled) return
-        Logger.d(TAG) { "manageSubscription — mode=$mode, url=${url ?: "⚠ portal URL not configured"}" }
+        Logger.d(tag = TAG) { "manageSubscription — mode=$mode, url=${url ?: "⚠ portal URL not configured"}" }
     }
 
     // ── Billing state ────────────────────────────────────────────────────────
@@ -67,9 +67,9 @@ object PayCraftLogger {
     fun onRefreshStatus(email: String?) {
         if (!enabled) return
         if (email == null) {
-            Logger.d(TAG) { "refreshStatus() — no stored email → Free (UI should prompt sign-in)" }
+            Logger.d(tag = TAG) { "refreshStatus() — no stored email → Free (UI should prompt sign-in)" }
         } else {
-            Logger.d(TAG) { "refreshStatus() → checking status for: ${redactEmail(email)}" }
+            Logger.d(tag = TAG) { "refreshStatus() → checking status for: ${redactEmail(email)}" }
         }
     }
 
@@ -83,60 +83,60 @@ object PayCraftLogger {
     ) {
         if (!enabled) return
         if (isPremium) {
-            Logger.d(TAG) {
+            Logger.d(tag = TAG) {
                 "✓ isPremium=true — email=${redactEmail(
                     email,
                 )}, plan=$plan, provider=$provider, expires=$expiresAt, willRenew=$willRenew"
             }
         } else {
-            Logger.d(TAG) { "isPremium=false for ${redactEmail(email)} — no active subscription found" }
+            Logger.d(tag = TAG) { "isPremium=false for ${redactEmail(email)} — no active subscription found" }
         }
     }
 
     fun onLogIn(email: String) {
         if (!enabled) return
-        Logger.d(TAG) { "logIn(${redactEmail(email)}) → saving + checking status..." }
+        Logger.d(tag = TAG) { "logIn(${redactEmail(email)}) → saving + checking status..." }
     }
 
     fun onLogOut() {
         if (!enabled) return
-        Logger.d(TAG) { "logOut() — clearing email + resetting to Free" }
+        Logger.d(tag = TAG) { "logOut() — clearing email + resetting to Free" }
     }
 
     // ── Network ──────────────────────────────────────────────────────────────
 
     fun onRpcCall(function: String, detail: String) {
         if (!enabled) return
-        Logger.d(TAG) { "RPC $function($detail)" }
+        Logger.d(tag = TAG) { "RPC $function($detail)" }
     }
 
     fun onRpcResult(function: String, result: String) {
         if (!enabled) return
-        Logger.d(TAG) { "  ↳ $function result: $result" }
+        Logger.d(tag = TAG) { "  ↳ $function result: $result" }
     }
 
     fun onRpcError(function: String, message: String?) {
         if (!enabled) return
-        Logger.e(TAG) { "  ✗ $function error: $message" }
+        Logger.e(tag = TAG) { "  ✗ $function error: $message" }
     }
 
     // ── Flow tracing (debug the billing pipeline) ─────────────────────────
 
     fun onFlow(method: String, detail: String) {
         if (!enabled) return
-        Logger.d(TAG) { "[$method] $detail" }
+        Logger.d(tag = TAG) { "[$method] $detail" }
     }
 
     fun onStateChange(from: String, to: String) {
         if (!enabled) return
-        Logger.d(TAG) { "STATE: $from → $to" }
+        Logger.d(tag = TAG) { "STATE: $from → $to" }
     }
 
     // ── Error ────────────────────────────────────────────────────────────────
 
     fun onError(source: String, message: String?) {
         if (!enabled) return
-        Logger.e(TAG) { "Error in $source: $message" }
+        Logger.e(tag = TAG) { "Error in $source: $message" }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

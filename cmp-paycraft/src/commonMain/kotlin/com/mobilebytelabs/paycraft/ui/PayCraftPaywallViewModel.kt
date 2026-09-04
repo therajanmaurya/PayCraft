@@ -138,7 +138,7 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
     }
 
     fun dispatch(action: PayCraftPaywallAction) {
-        Logger.d(TAG) { "Action dispatched: $action" }
+        Logger.d(tag = TAG) { "Action dispatched: $action" }
         when (action) {
             is PayCraftPaywallAction.SelectPlan -> onSelectPlan(action)
             is PayCraftPaywallAction.UpdateEmail -> onUpdateEmail(action)
@@ -211,7 +211,7 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
         try {
             PayCraft.checkout(plan, email.ifBlank { null })
         } catch (t: Throwable) {
-            Logger.e(TAG) { "checkout failed for plan ${plan.id}: ${t.message}" }
+            Logger.e(tag = TAG) { "checkout failed for plan ${plan.id}: ${t.message}" }
             _state.update {
                 it.copy(
                     isSubmitting = false,
@@ -245,7 +245,7 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
         try {
             PayCraft.checkoutWithProvider(action.plan, action.provider, email.ifBlank { null })
         } catch (t: Throwable) {
-            Logger.e(TAG) { "checkoutWithProvider failed for ${action.plan.id}: ${t.message}" }
+            Logger.e(tag = TAG) { "checkoutWithProvider failed for ${action.plan.id}: ${t.message}" }
             _state.update {
                 it.copy(
                     isSubmitting = false,
@@ -268,7 +268,7 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
         viewModelScope.launch {
             _events.send(PayCraftPaywallEvent.ManageLaunched(url = email))
         }
-        Logger.d(TAG) { "Managing subscription for $email, support: $supportEmail" }
+        Logger.d(tag = TAG) { "Managing subscription for $email, support: $supportEmail" }
     }
 
     private fun onLogIn() {

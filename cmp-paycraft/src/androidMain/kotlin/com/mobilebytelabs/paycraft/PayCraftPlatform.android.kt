@@ -87,7 +87,7 @@ actual object PayCraftPlatform {
 
     actual fun openUrl(url: String) {
         val context = appContext ?: run {
-            Logger.e("PayCraftPlatform") {
+            Logger.e(tag = "PayCraftPlatform") {
                 "Android context not initialized. Call PayCraftPlatform.init(context) first."
             }
             return
