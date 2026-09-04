@@ -667,7 +667,7 @@ gh run watch --repo MobileByteLabs/PayCraft \
 ```
 
 The workflow:
-1. Builds all targets (`androidRelease`, `iosArm64`, `iosSimulatorArm64`, `jvm`, `js`, `wasmJs`). No `iosX64` (Compose MP publishes no iosx64 variant past 1.11.0-alpha01), no macOS/linux/mingw (Store5 publishes no variant for them).
+1. Builds all targets (`androidRelease`, `iosArm64`, `iosSimulatorArm64`, `jvm`, `js`, `wasmJs`).
 2. Signs every artifact with the in-vault GPG key.
 3. Uploads to Sonatype OSSRH staging.
 4. Closes + releases the staging repository (auto-promotes to Central).

@@ -13,9 +13,6 @@ kotlin {
     applyDefaultHierarchyTemplate()
     androidTarget()
     jvm("desktop")
-    // iosX64 (Intel-Mac simulator) NOT declared: Compose Multiplatform stopped publishing an
-    // iosx64 variant after 1.11.0-alpha01 — runtime/foundation/material3 all end there, while
-    // iosarm64 tracks current. Declaring it makes `compileKotlinIosX64` unresolvable.
     iosArm64()
     iosSimulatorArm64()
     wasmJs { browser() }

@@ -18,10 +18,6 @@ kotlin {
 
     jvm("desktop")
 
-    // iosX64 REMOVED: :cmp-paycraft dropped it on 2026-08-26 (Compose MP 1.11+ publishes no
-    // iosX64 variant), so `:sample-app:compileKotlinIosX64` could not resolve project
-    // :cmp-paycraft and any "Compile All Targets" run failed. The declaration outlived the
-    // dependency it needed. Apple-Silicon simulators use iosSimulatorArm64; devices use iosArm64.
     listOf(
         iosArm64(),
         iosSimulatorArm64(),

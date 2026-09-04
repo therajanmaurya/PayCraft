@@ -6,8 +6,6 @@ plugins {
 
 kotlin {
     androidTarget()
-    // iosX64 (Intel-Mac simulator) NOT declared: this template depends on cmp-paycraft, a Compose
-    // Multiplatform library, and CMP publishes no iosx64 variant after 1.11.0-alpha01.
     iosArm64()
     iosSimulatorArm64()
     jvm("desktop")
