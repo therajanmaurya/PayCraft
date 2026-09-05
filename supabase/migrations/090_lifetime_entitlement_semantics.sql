@@ -11,8 +11,13 @@
 -- predicate: NULL is checked FIRST, so a null expiry short-circuits to "current" rather than
 -- falling through to a NULL comparison that would evaluate to NULL and read as false.
 
+-- STABLE, not IMMUTABLE: the body calls now(), which is itself STABLE. Labelling it IMMUTABLE
+-- would be a lie the planner is entitled to act on — most damagingly, a functional index built on
+-- this predicate would freeze each row's verdict at write time and never re-evaluate as time
+-- passed, so expired entitlements would keep reading as current. The sibling
+-- is_premium_by_app_user is STABLE for the same reason.
 CREATE OR REPLACE FUNCTION public.is_entitlement_current(p_state text, p_expires_at timestamptz)
-RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+RETURNS boolean LANGUAGE sql STABLE PARALLEL SAFE AS $$
   SELECT p_state IN ('trial','active','active_non_renewing','in_grace_period')
      AND (p_expires_at IS NULL OR p_expires_at > now());
 $$;

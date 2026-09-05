@@ -5,6 +5,10 @@ import { readFileSync } from "fs";
 // A browser is required rather than curl: the page is a client component that fetches in
 // useEffect, so server-rendered HTML only ever contains the loading state.
 async function main() {
+  // Derived, never hardcoded: a `supabase db reset` + re-seed changes the product's UUID, and a
+  // stale literal turns this canary into a 404 that reads like a genuine render failure.
+  const PID = process.env.PC_TEST_PRODUCT_ID;
+  if (!PID) { console.log("SKIP — PC_TEST_PRODUCT_ID not set (run seed.sh)"); process.exit(2); }
   const cookieStr = readFileSync("/tmp/pc-cookie.txt", "utf8").trim();
   const cookies = cookieStr.split("; ").map((kv) => {
     const i = kv.indexOf("=");
@@ -18,7 +22,7 @@ async function main() {
   const consoleErrors: string[] = [];
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
 
-  await page.goto("http://127.0.0.1:3999/products/1e4ef5ee-293f-471d-a7b1-e5db407f7497/pricing", { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.goto("http://127.0.0.1:3999/products/" + PID + "/pricing", { waitUntil: "domcontentloaded", timeout: 60000 });
   // Wait for the client-side fetch to resolve into EITHER the real row or the error state,
   // rather than a fixed sleep that could capture the loading frame and read as a stub-free pass.
   await page.waitForFunction(

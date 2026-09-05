@@ -107,6 +107,14 @@ BEGIN
       --
       -- A non-lifetime product with a NULL interval is a legitimate non-recurring product, not an
       -- error — it maps to the merchant-custom slot rather than aborting the migration.
+      --
+      -- TRIAL products (product_type has three values: subscription, trial, lifetime) intentionally
+      -- have no arm of their own: a trial maps by its CADENCE, so a trial-of-monthly joins the
+      -- $rc_monthly package. That is deliberate, because a trial is a flavour of the plan it
+      -- converts into, not a separate commercial slot — RevenueCat models it the same way, via a
+      -- package's introductory offer. If a dedicated $rc_trial role is ever wanted, it needs both
+      -- an arm here AND an addition to the reserved-role CHECK above; a trial with a NULL interval
+      -- currently lands in $rc_custom.
       v_role := CASE
         WHEN p.type = 'lifetime'        THEN '$rc_lifetime'
         WHEN p.interval = 'year'        THEN '$rc_annual'

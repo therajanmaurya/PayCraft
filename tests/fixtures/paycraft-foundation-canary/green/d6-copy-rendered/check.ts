@@ -5,6 +5,10 @@ import { readFileSync } from "fs";
 // Grepping the source proves the string was typed; only rendering it proves a merchant sees it
 // before deciding to disable a product they have already sold.
 async function main() {
+  // Derived, never hardcoded: a `supabase db reset` + re-seed changes the product's UUID, and a
+  // stale literal turns this canary into a 404 that reads like a genuine render failure.
+  const PID = process.env.PC_TEST_PRODUCT_ID;
+  if (!PID) { console.log("SKIP — PC_TEST_PRODUCT_ID not set (run seed.sh)"); process.exit(2); }
   const cookieStr = readFileSync("/tmp/pc-cookie.txt", "utf8").trim();
   const cookies = cookieStr.split("; ").map((kv) => {
     const i = kv.indexOf("=");
@@ -14,7 +18,7 @@ async function main() {
   const ctx = await browser.newContext();
   await ctx.addCookies(cookies);
   const page = await ctx.newPage();
-  await page.goto("http://127.0.0.1:3999/products/1e4ef5ee-293f-471d-a7b1-e5db407f7497/edit",
+  await page.goto("http://127.0.0.1:3999/products/" + PID + "/edit",
     { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForSelector("[data-testid=product-active-d6-copy]", { timeout: 20000 })
     .catch(() => {});

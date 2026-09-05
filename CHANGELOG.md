@@ -17,6 +17,13 @@
 - dashboard: `GET /api/products/[id]` added (was missing — F17); the pricing page renders the real
   row and shows an explicit failure state instead of a fabricated `Product` / `9.99` placeholder.
 - dashboard: D6 disclosure rendered beside the product active toggle.
+- **091 (security)** revokes `anon`/`PUBLIC` EXECUTE on `tenant_products_upsert`,
+  `tenant_pricing_upsert`, `tenant_products_delete`, `sync_event_emit`,
+  `tenant_providers_set_account_label` and `_tenant_products_upsert_core`. Migration 084's
+  ownership guard bypasses on a NULL `auth.uid()` for the trusted backend, and assumed anon could
+  not reach these RPCs — but PostgreSQL grants EXECUTE to PUBLIC by default, so a holder of the
+  PUBLISHABLE anon key could write any tenant's products. Verified closed: `HTTP 401 permission
+  denied`, zero rows written; `authenticated` and `service_role` unaffected.
 
 ## [Unreleased] — unified country detection + per-platform provider routing
 

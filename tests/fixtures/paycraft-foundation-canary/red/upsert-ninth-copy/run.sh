@@ -9,14 +9,23 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 MIG="$(cd "$HERE/../../../../.." && pwd)/supabase/migrations"
 GREEN="$HERE/../../green/upsert-composable/run.sh"
 
-TMP="$(mktemp -d -t ac8-red-XXXXXX)"; trap 'rm -rf "$TMP"' EXIT
-cp "$MIG"/089_tenant_products_upsert_compose.sql "$TMP/" 2>/dev/null || true
-cp "$HERE/fixture/091_ninth_copy.sql" "$TMP/091_ninth_copy.sql"
-
-if out="$(bash "$GREEN" "$TMP" 2>&1)"; then
-  echo "AC-8-RED FAIL — the ninth copy slipped through the shape lint" >&2
-  printf '%s\n' "$out" >&2; exit 1
-fi
-printf '%s' "$out" | grep -q '091_ninth_copy.sql' \
-  || { echo "AC-8-RED FAIL — refused, but did not identify the offending migration" >&2; printf '%s\n' "$out" >&2; exit 1; }
-echo "AC-8-RED PASS — shape lint refused the ninth copy"
+# Three variants, because the lint must refuse a REFORMATTED copy and not merely the canonical
+# one. Variants 2 and 3 both passed the original line-oriented case-sensitive grep.
+fail=0
+for fx in 091_ninth_copy 092_uppercase_copy 093_wrapped_copy; do
+  TMP="$(mktemp -d -t ac8-red-XXXXXX)"
+  cp "$MIG"/089_tenant_products_upsert_compose.sql "$TMP/" 2>/dev/null || true
+  cp "$HERE/fixture/$fx.sql" "$TMP/$fx.sql"
+  if out="$(bash "$GREEN" "$TMP" 2>&1)"; then
+    echo "AC-8-RED FAIL — $fx slipped through the shape lint" >&2
+    printf '%s\n' "$out" >&2; fail=1
+  elif ! printf '%s' "$out" | grep -q "$fx.sql"; then
+    echo "AC-8-RED FAIL — $fx refused, but the offending migration was not named" >&2
+    printf '%s\n' "$out" >&2; fail=1
+  else
+    echo "  refused: $fx"
+  fi
+  rm -rf "$TMP"
+done
+[ "$fail" -eq 0 ] || exit 1
+echo "AC-8-RED PASS — shape lint refused all three copy variants (canonical, uppercase, wrapped)"
