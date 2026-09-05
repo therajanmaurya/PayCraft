@@ -1,0 +1,88 @@
+# PayCraft Phase 4 — per-consumer, per-platform release verdict grid (D10).
+#
+# This is the artefact D10 reads to decide whether the epic is done. Its whole purpose is to make
+# "done" un-fakeable at the granularity where the previous epic failed: six green gates and 47 tasks
+# that never reached a device (RESEARCH R8).
+#
+# THE RULE THAT MATTERS: a platform row may only be `green` if it carries its OWN capture_path.
+# An iOS row can never inherit an Android capture — different binary, different store lane, different
+# storefront API — and that inheritance is precisely how a paywall ships broken on one platform while
+# a dashboard shows all-green.
+#
+# verdict vocabulary:
+#   green                 bumped AND device-verified with a capture of THIS platform
+#   bumped-not-verified   pin landed, no device capture yet (a publish is NOT rolled back by this)
+#   pending-device-verify no device available; explicitly NOT a pass
+#   out-of-scope          deliberately excluded, requires a stated reason
+
+generated_at: "2026-09-05T09:53:00Z"
+
+publish:
+  # NOT published. /lib-publish release is outward-facing and irreversible; it requires explicit
+  # operator authorisation, which has not been given. Secrets are present (see
+  # PAYCRAFT_PHASE4_SECRETS_VERDICT.yaml) so the blocker is authorisation, not capability.
+  published_version: null
+  sdk_version_on_disk: "2.3.2"
+  status: awaiting-operator-authorisation
+  route: "/lib-publish release"
+
+consumers:
+  - consumer: reels-downloader
+    pinned_version: "2.3.1"
+    platform: android
+    bumped: false
+    verified: false
+    verdict: pending-device-verify
+    reason: "SDK not published; no Android device or emulator available (adb unavailable)"
+    capture_path: null
+  - consumer: reels-downloader
+    pinned_version: "2.3.1"
+    platform: ios
+    bumped: false
+    verified: false
+    verdict: pending-device-verify
+    reason: "SDK not published; no booted iOS simulator or device"
+    capture_path: null
+
+  - consumer: steady
+    pinned_version: "2.3.1"
+    platform: android
+    bumped: false
+    verified: false
+    verdict: pending-device-verify
+    reason: "SDK not published; no Android device or emulator available (adb unavailable)"
+    capture_path: null
+  - consumer: steady
+    pinned_version: "2.3.1"
+    platform: ios
+    bumped: false
+    verified: false
+    verdict: pending-device-verify
+    reason: "SDK not published; no booted iOS simulator or device. Also blocks AC-13 storefront capture."
+    capture_path: null
+
+  - consumer: cappy
+    pinned_version: "2.3.1"
+    platform: android
+    bumped: false
+    verified: false
+    verdict: pending-device-verify
+    reason: "SDK not published; no Android device or emulator available (adb unavailable)"
+    capture_path: null
+  - consumer: cappy
+    pinned_version: "2.3.1"
+    platform: ios
+    bumped: false
+    verified: false
+    verdict: pending-device-verify
+    reason: "SDK not published; no booted iOS simulator or device. Also blocks AC-13 storefront capture."
+    capture_path: null
+
+# AC-35 — the single capture this epic exists for: steady gates onboarding behind the paywall with
+# a no-op dismiss unless already Premium, so before Phase 3a an offline user at first launch was
+# permanently stuck inside a shipped app. This asserts the four-layer chain renders a purchasable or
+# dismissible surface with the network off.
+ac35_steady_offline_onboarding:
+  verdict: pending-device-verify
+  reason: "requires an Android device with the bumped build installed; none available"
+  capture_path: null
