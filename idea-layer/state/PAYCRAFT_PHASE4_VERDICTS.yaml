@@ -83,6 +83,65 @@ consumers:
 # permanently stuck inside a shipped app. This asserts the four-layer chain renders a purchasable or
 # dismissible surface with the network off.
 ac35_steady_offline_onboarding:
-  verdict: pending-device-verify
-  reason: "requires an Android device with the bumped build installed; none available"
-  capture_path: null
+  # PREMISE NOT REPRODUCIBLE — not a pass, and not a failure of the resilience chain.
+  #
+  # AC-35 assumed steady gates onboarding behind the paywall, so an offline first-run user is
+  # stranded. That gate is NOT live in the current build: RootNavScreen.kt registers
+  # `splashDestination()` then `authenticatedGraph(...)` with `onboardingDestination()` COMMENTED
+  # OUT, and RootNavState.ShowOnboarding maps to an empty route. Verified on device
+  # (CPH2423 / Android 15): uninstall + reinstall + radios off → cold launch lands on Home, fully
+  # usable. The RESEARCH finding (F23) that motivated this AC is stale.
+  #
+  # The paywall screen still exists and still carries the no-op dismiss, but nothing routes a
+  # first-run user to it — its only in-app trigger is account deletion.
+  verdict: premise-not-reproducible
+  reason: "steady's onboarding gate is disabled at the root nav (onboardingDestination commented out); offline cold start lands on Home, not a paywall. Verified on device 2026-09-05."
+  capture_path: "idea-layer/testers/captures/paycraft-phase4/ac35-steady-offline-cold-01.png"
+  device: "CPH2423 (Android 15), apk md5 a49c4802ddbb6b90a46ebc355c988ea1"
+  offline_proof: "svc wifi disable + svc data disable; ping 8.8.8.8 → Network is unreachable"
+  rescoped_to: "reels-downloader Settings → Subscription (a reachable PayCraftPaywall host)"
+
+# Findings the device run itself surfaced. No gate in this epic would have caught any of them,
+# because all three are properties of the running app and its environment rather than the source.
+device_run_findings:
+  - id: DR-1
+    what: "steady's profile tab renders completely blank offline — no content, no error, no retry"
+    capture_path: "idea-layer/testers/captures/paycraft-phase4/ac35-steady-offline-profile-blank.png"
+  - id: DR-2
+    what: "steady's paywall has NO reachable entry point — onboardingDestination is registered only in the authenticated graph and its sole in-app trigger is account deletion"
+  - id: DR-3
+    what: "airplane_mode_on=1 does NOT disable radios on this OEM — the device still reached 8.8.8.8 in 15ms with the flag set. Any offline test that trusts that setting is measuring nothing."
+
+  - id: DR-4
+    severity: RELEASE-BLOCKING
+    what: |
+      Publishing PayCraft at its current dependency set CRASHES consumers on launch, before any UI.
+
+      Published 2.3.1 declares Supabase 3.1.4 — BELOW every consumer's pin — so Gradle resolves the
+      shared modules DOWN to the consumer's version and everything is self-consistent. PayCraft's
+      source has since moved ABOVE the consumers (Supabase 3.1.4 → 3.8.0, Kermit 2.0.8 → 2.1.0),
+      which INVERTS the resolution: transitively-shared modules jump forward while the consumer's
+      directly-pinned artifacts stay behind, and the mismatched pair fails at class-init.
+
+      Reproduced on device (CPH2423 / Android 15) against a mavenLocal 2.4.0-SNAPSHOT, three
+      independent failures, each surviving the fix for the previous one:
+        1. NoSuchMethodError SupabaseClient$Companion.createLogger$default   (Supabase 3.2.6 vs 3.8.0)
+        2. NoSuchMethodError kermit Logger$Companion.d$default               (Kermit 2.0.8 vs 2.1.0)
+        3. NoSuchMethodError SelectRequestBuilder.<init>(PropertyConversionMethod)
+
+      The third one is the important one: it is not a pin skew but an API BREAK. reels-downloader's
+      OWN SOURCE calls Postgrest APIs whose shape changed in 3.8.0. So this is not "bump a few
+      versions" — each consumer needs a Supabase source migration.
+    implication_for_ac33: |
+      /lib-install-bump-workflow bumps the paycraft pin ONLY. That is not a bump, it is a launch
+      crash. Every consumer PR must carry a coordinated dependency upgrade AND a source migration,
+      and must be device-verified BEFORE merge rather than after.
+    why_no_gate_caught_it: |
+      Nothing in this epic could have. The SDK compiles, 385 tests pass, all goldens verify, every
+      gate is green — none of which exercises dependency RESOLUTION inside a consumer application.
+      It requires a real install on a real device, which is the entire argument for D10's
+      definition of done.
+    options:
+      - "Hold PayCraft at Supabase 3.1.x for this release so consumers resolve down as they do today (smallest blast radius; defers the upgrade)"
+      - "Publish 3.8.0 and migrate all three consumers' Supabase source in the same release train (correct long-term; much larger scope than this epic)"
+    evidence: "device logcat, three crash traces; reels-downloader pins reverted to 2.3.1 / 3.2.6 / 2.0.8 and its tree is clean"
