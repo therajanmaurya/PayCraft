@@ -20,6 +20,29 @@ require_dashboard() {
         echo "SKIP — no session cookie at $PC_COOKIE_FILE (mint one for the canary user)." >&2
         return 2
     fi
+
+    # The cookie FILE existing is not the same as the SESSION being usable. A `supabase db reset`
+    # wipes auth.users and tenant_admins while leaving the cookie on disk, so the old check passed
+    # its preconditions and the tests then failed on their assertions — which reads as a product
+    # regression when it is actually a dead session. Ask the dashboard whether the session still
+    # authenticates, and SKIP if not.
+    local probe
+    probe="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+        -H "Cookie: $(cat "$PC_COOKIE_FILE")" "$PC_DASH_URL/api/products/00000000-0000-0000-0000-000000000000" 2>/dev/null)"
+    case "$probe" in
+        # 404 = authenticated and the row genuinely does not exist. That is the healthy answer.
+        404|200) : ;;
+        401|403|000)
+            echo "SKIP — session at $PC_COOKIE_FILE is no longer valid (probe HTTP $probe)." >&2
+            echo "       A db reset wipes auth.users; re-seed and mint a fresh cookie." >&2
+            return 2 ;;
+        302|307)
+            echo "SKIP — dashboard redirected the probe (HTTP $probe), session likely expired." >&2
+            return 2 ;;
+        *)
+            echo "SKIP — unexpected probe status $probe; refusing to run against an unknown state." >&2
+            return 2 ;;
+    esac
 }
 
 # Walks up to find the framework root rather than counting `../..` levels. Counting is brittle —
