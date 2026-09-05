@@ -5,6 +5,8 @@ import com.mobilebytelabs.paycraft.billing.NativeBillingClient
 import com.mobilebytelabs.paycraft.billing.NativeDisplayPrice
 import com.mobilebytelabs.paycraft.billing.resolveCheckoutLane
 import com.mobilebytelabs.paycraft.config.ConfigCache
+import com.mobilebytelabs.paycraft.config.ConfigResult
+import com.mobilebytelabs.paycraft.config.readBundledSuiteConfigJsonOrNull
 import com.mobilebytelabs.paycraft.config.CouponDto
 import com.mobilebytelabs.paycraft.config.ProductDto
 import com.mobilebytelabs.paycraft.config.ProviderDto
@@ -46,6 +48,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import org.koin.mp.KoinPlatform
 
@@ -76,6 +79,19 @@ object PayCraft {
      * edits previously failed to surface in consumer apps until a cold relaunch.
      */
     val suiteConfigFlow: StateFlow<SuiteConfig?> = _suiteConfigFlow.asStateFlow()
+
+    private val _configResultFlow = MutableStateFlow<ConfigResult>(ConfigResult.Loading)
+
+    /**
+     * WHICH resilience layer answered, and how much the answer should be trusted.
+     *
+     * [suiteConfigFlow] deliberately still exists and still emits — every existing consumer keeps
+     * working unchanged. What it cannot express is the difference between "no config yet", "the
+     * fetch failed", and "this is last week's cache": all three are null or an indistinguishable
+     * value there, which is why an offline user sat on a spinner forever. Collect THIS flow to tell
+     * those apart.
+     */
+    val configResultFlow: StateFlow<ConfigResult> = _configResultFlow.asStateFlow()
 
     internal val suiteConfig: SuiteConfig? get() = _suiteConfigFlow.value
 
@@ -414,9 +430,17 @@ object PayCraft {
                 header("X-PayCraft-Platform", runCatching { PlatformInfo.platform.lowercase() }.getOrDefault(""))
             }
             if (!response.status.isSuccess()) {
+                // Previously this logged "paywall stays in loading state" and bare-returned, which
+                // is exactly what it said: _suiteConfigFlow was never written, so the composable's
+                // `config == null` gate held PaywallSkeleton forever. Now the request falls through
+                // the remaining layers and, whatever they yield, the UI is told what happened.
                 PayCraftLogger.onError(
                     "loadConfig",
-                    "cloud fetch HTTP ${response.status.value} — paywall stays in loading state",
+                    "cloud fetch HTTP ${response.status.value} — falling back through the resilience chain",
+                )
+                fallBackThroughChain(
+                    ConfigResult.Failed.Reason.HTTP_ERROR,
+                    "HTTP ${response.status.value}",
                 )
                 return
             }
@@ -439,6 +463,7 @@ object PayCraft {
                 serverGeo = cfg.geoCountry,
             )
             applySuiteConfig(cfg)
+            _configResultFlow.value = ConfigResult.Fresh(cfg)
             // Persist for the NEXT cold start. Without this the "warm cache skips the skeleton"
             // path only held within a single process: every first open of the day showed the
             // skeleton, and a launch with no network rendered no products at all.
@@ -453,6 +478,15 @@ object PayCraft {
             throw e
         } catch (e: Throwable) {
             PayCraftLogger.onError("loadConfig", e.message)
+            // A transport failure and a malformed payload need different words in the UI: one is
+            // "you appear to be offline, try again", the other is "something is wrong on our side".
+            // Offering retry for the second would be a lie.
+            val reason = if (e is SerializationException) {
+                ConfigResult.Failed.Reason.DECODE_ERROR
+            } else {
+                ConfigResult.Failed.Reason.OFFLINE
+            }
+            fallBackThroughChain(reason, e.message)
         }
         // NOTE: deliberately no http.close() here — the client is process-scoped and shared (see
         // [configHttpClient]). It is closed once, in [shutdown].
@@ -511,10 +545,99 @@ object PayCraft {
      *
      * Never overwrites a config already resolved this process — a live value always wins over disk.
      */
+    /**
+     * Layers 2 → 3 → 4 of the resilience chain, run when the network layer did not answer.
+     *
+     * Order is deliberate and each step is strictly weaker than the one before:
+     *   2. PERSISTED CACHE — real data this user actually saw, possibly past its TTL.
+     *   3. BUNDLED FALLBACK — real data the developer shipped, but never user-specific.
+     *   4. BUILT-IN — no data; render a minimal purchasable surface so a paying user can still pay.
+     *
+     * If even layer 4 has nothing to price, the result is [ConfigResult.Failed] — terminal, and
+     * carrying the reason so the UI can say something true rather than spin.
+     *
+     * This function must not throw. It runs on the failure path, and an exception here would strand
+     * the very user it exists to rescue.
+     */
+    /**
+     * Clears the resolved-config state so a test can exercise a cold chain.
+     *
+     * `internal`, so it is not part of the public SDK surface. It exists because PayCraft is an
+     * `object`: `_suiteConfigFlow` survives between tests, and layer 4 legitimately answers
+     * BuiltIn whenever ANY product is already known — which made the terminal Failed branch
+     * unreachable in a suite rather than genuinely absent. Weakening the assertion instead would
+     * have left the branch untested while looking green.
+     */
+    internal fun resetConfigStateForTesting() {
+        _suiteConfigFlow.value = null
+        _configResultFlow.value = ConfigResult.Loading
+    }
+
+    private fun fallBackThroughChain(reason: ConfigResult.Failed.Reason, detail: String?) {
+        // ── Layer 2: persisted cache ────────────────────────────────────────────────────────
+        // NOTE this is NOT applyCachedSuiteConfig(): that one returns early when a config is
+        // already present, because its job is a cold-start warm-up. Here we WANT the cache even if
+        // something is loaded, since what is loaded may be the thing that just failed to refresh.
+        val cached = runCatching { configCacheOrNull()?.read() }.getOrNull()
+        if (cached != null) {
+            applySuiteConfig(cached)
+            // ConfigCache.read() signals expiry by handing back a copy with cacheTtlSeconds = 0.
+            val stale = cached.cacheTtlSeconds == 0
+            _configResultFlow.value = if (stale) {
+                val ageSec = (currentTimeMillis() - cached.fetchedAtEpochMillis) / 1000
+                PayCraftLogger.onFlow("loadConfig", "serving STALE cache — ${ageSec}s old")
+                ConfigResult.Stale(cached, ageSec)
+            } else {
+                PayCraftLogger.onFlow("loadConfig", "serving cache — ${cached.products.size} products")
+                ConfigResult.Cached(cached)
+            }
+            return
+        }
+
+        // ── Layer 3: bundled fallback shipped in the app binary ─────────────────────────────
+        val bundledJson = runCatching { readBundledSuiteConfigJsonOrNull() }.getOrNull()
+        if (!bundledJson.isNullOrBlank()) {
+            val bundled = runCatching {
+                Json { ignoreUnknownKeys = true; isLenient = true }
+                    .decodeFromString(SuiteConfig.serializer(), bundledJson)
+            }.getOrNull()
+            if (bundled != null) {
+                applySuiteConfig(bundled)
+                _configResultFlow.value = ConfigResult.Bundled(bundled)
+                PayCraftLogger.onFlow("loadConfig", "serving BUNDLED fallback — ${bundled.products.size} products")
+                return
+            }
+            // A malformed bundled file is a developer error worth surfacing, but not worth
+            // aborting the chain for — layer 4 still gives the user somewhere to go.
+            PayCraftLogger.onError("loadConfig", "bundled fallback present but failed to decode")
+        }
+
+        // ── Layer 4: built-in ───────────────────────────────────────────────────────────────
+        // Only honest when there is something purchasable to name. Otherwise the truthful answer
+        // is Failed, and a paywall pretending to sell nothing would be worse than an error.
+        val known = _suiteConfigFlow.value?.products.orEmpty()
+        if (known.isNotEmpty()) {
+            _configResultFlow.value = ConfigResult.BuiltIn
+            PayCraftLogger.onFlow("loadConfig", "serving BUILT-IN paywall — ${known.size} known products")
+            return
+        }
+
+        _configResultFlow.value = ConfigResult.Failed(reason, detail)
+        PayCraftLogger.onError("loadConfig", "all resilience layers exhausted — $reason ${detail ?: ""}")
+    }
+
     private fun applyCachedSuiteConfig() {
         if (_suiteConfigFlow.value != null) return
         val cached = configCacheOrNull()?.let { runCatching { it.read() }.getOrNull() } ?: return
         applySuiteConfig(cached)
+        // Publish the layer as well as the data: a warm start from an EXPIRED cache still renders,
+        // but the user should be told the prices may have moved rather than shown stale numbers as
+        // though they were fresh. The in-flight refresh will overwrite this with Fresh if it lands.
+        _configResultFlow.value = if (cached.cacheTtlSeconds == 0) {
+            ConfigResult.Stale(cached, (currentTimeMillis() - cached.fetchedAtEpochMillis) / 1000)
+        } else {
+            ConfigResult.Cached(cached)
+        }
         PayCraftLogger.onFlow(
             "loadConfig",
             "warm start from persisted cache — ${cached.products.size} products (revalidating)",

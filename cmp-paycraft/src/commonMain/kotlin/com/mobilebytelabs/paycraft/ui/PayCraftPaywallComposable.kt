@@ -39,6 +39,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
+import com.mobilebytelabs.paycraft.config.ConfigResult
+import com.mobilebytelabs.paycraft.ui.components.ConfigUnavailable
+import com.mobilebytelabs.paycraft.ui.components.StaleConfigNotice
 import com.mobilebytelabs.paycraft.PayCraft
 import com.mobilebytelabs.paycraft.config.SuiteConfig
 import com.mobilebytelabs.paycraft.model.BillingPlan
@@ -348,9 +351,26 @@ private fun PayCraftPaywallSurface(
             // (config already non-null) never forces the skeleton, so there is no flash;
             // once config resolves non-null the real content renders even if products is
             // genuinely empty (a real empty-state, not loading).
-            val productsLoading = config == null && state.billingState !is BillingState.Premium
+            // The skeleton is now gated on the RESILIENCE OUTCOME, not on `config == null`.
+            //
+            // `config == null` meant four different things — never fetched, fetch in flight, HTTP
+            // error, and offline — and rendered a spinner for all of them. Three of those are
+            // terminal, so the spinner never went away; on a host that gates onboarding behind the
+            // paywall, that stranded the user inside a shipped app. Loading is the only outcome a
+            // spinner is honest for.
+            val configResult by PayCraft.configResultFlow.collectAsState()
+            val productsLoading = configResult.isLoading &&
+                config == null &&
+                state.billingState !is BillingState.Premium
             if (productsLoading) {
                 PaywallSkeleton(planCount = 3)
+            } else if (config == null && state.billingState !is BillingState.Premium) {
+                // Every layer failed and there is nothing to price. Say so, and offer retry only
+                // when the failure might actually be transient.
+                ConfigUnavailable(
+                    result = configResult,
+                    onRetry = { onAction(PayCraftPaywallAction.RefreshStatus) },
+                )
             } else {
                 val template = PaywallTemplate.parse(config?.paywall?.template.orEmpty())
                 val products: List<Product> = config?.products
@@ -358,6 +378,14 @@ private fun PayCraftPaywallSurface(
                     ?.map(ProductMapper::fromDto)
                     ?.sortedBy { it.displayOrder }
                     ?: emptyList()
+                // AC-21: a warm cache offline renders last week's prices. Saying nothing would
+                // present them as current, which is the one thing a paywall must not do.
+                if (configResult.isStale) {
+                    StaleConfigNotice(
+                        ageSeconds = (configResult as? ConfigResult.Stale)?.ageSeconds ?: 0L,
+                        onRetry = { onAction(PayCraftPaywallAction.RefreshStatus) },
+                    )
+                }
                 template.render(
                     state = state.billingState,
                     products = products,

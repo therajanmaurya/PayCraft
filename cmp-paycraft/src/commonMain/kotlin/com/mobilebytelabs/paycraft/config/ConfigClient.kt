@@ -19,6 +19,15 @@ import kotlinx.serialization.json.Json
  * On any non-success status or thrown exception, the last-known cached value is returned
  * (or `null` if the cache is empty).
  */
+@Deprecated(
+    message = "Superseded by the resilience chain inside PayCraft.loadConfig(). This class was " +
+        "never wired into the real fetch path — PayCraft performs an inline HTTP fetch to avoid " +
+        "the Settings dependency — so its catch → cache.read() fallback never ran in production. " +
+        "That shape now lives in PayCraft.fallBackThroughChain(), which additionally falls through " +
+        "to a bundled fallback and a built-in paywall, and publishes ConfigResult so the UI can " +
+        "tell a failure from a load. Collect PayCraft.configResultFlow instead.",
+    level = DeprecationLevel.WARNING,
+)
 class ConfigClient(
     private val http: HttpClient,
     private val backend: PayCraftBackend,

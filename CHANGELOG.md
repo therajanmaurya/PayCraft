@@ -36,6 +36,20 @@
 - steady + cappy: wired the native StoreKit 2 bridge (Gradle export, `viewController(storeKit2Bridge:)`,
   the Swift shim, and the Xcode registration). Their iOS storefront country never resolved before,
   so an India buyer on an en-GB phone was billed in GBP. **Not yet device-verified.**
+- **Resilience chain (AC-20..AC-24)** — `SuiteConfig?` no longer conflates four situations.
+  New sealed `ConfigResult` (Loading / Fresh / Cached / Stale / Bundled / BuiltIn / Failed) is
+  published on `PayCraft.configResultFlow`, and both config-failure paths now fall through
+  **network → persisted cache → per-platform bundled fallback → built-in paywall** instead of
+  bare-returning. The paywall skeleton is gated on `Loading` alone, so an HTTP error or an offline
+  device no longer leaves a permanent spinner in front of a user — on hosts that gate onboarding
+  behind the paywall, that previously stranded them inside a shipped app.
+  Adds `readBundledSuiteConfigJsonOrNull()` (expect/actual across android/ios/jvm/js/wasmJs; web
+  returns null by design), a `paycraft-fallback.json` template, `BuiltInPaywall`,
+  `ConfigUnavailable` and `StaleConfigNotice`. An expired cache now says so instead of presenting
+  last week's prices as current.
+- `ConfigClient` is **deprecated** — it was never wired into the real fetch path, so its
+  `catch → cache.read()` fallback never ran. That shape now lives inline in `PayCraft`. Kept rather
+  than deleted because it is public API of a published artifact.
 - **091 (security)** revokes `anon`/`PUBLIC` EXECUTE on `tenant_products_upsert`,
   `tenant_pricing_upsert`, `tenant_products_delete`, `sync_event_emit`,
   `tenant_providers_set_account_label` and `_tenant_products_upsert_core`. Migration 084's
