@@ -11,6 +11,7 @@
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { diverges, resolveServed, resolveShadow } from "../_shared/pricing-shadow.ts"
 import {
   RateLimitError,
   rateLimitResponse,
@@ -107,6 +108,31 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
   const callerPlatform =
     (req.headers.get("x-paycraft-platform") ?? "").trim().toLowerCase() || null
 
+  // ── D11 Stage A: compute BOTH price-country chains; keep serving the OLD one ──────────────
+  // The served chain stays locale-only so this deploy cannot move a single price. The shadow
+  // chain is the corrected precedence, and the delta between them is what makes the Stage B
+  // cut-over an evidence-based decision rather than a leap.
+  //
+  // `sdkCountry` is the Accept-Language country ONLY when a platform header proves an SDK sent it.
+  // A real browser has no such header, so its Accept-Language stays a language preference and the
+  // shadow chain falls through to server geo — which is the actual revenue fix (a US buyer whose
+  // browser prefers fr-FR is currently billed in EUR).
+  const overrideCountry =
+    (new URL(req.url).searchParams.get("country") ??
+      req.headers.get("x-country"))?.trim()?.toUpperCase() || null
+  const sdkProvenanceHeader =
+    (req.headers.get("x-paycraft-country-provenance") ?? "").trim().toLowerCase() || null
+  const priceInputs = {
+    overrideCountry,
+    sdkCountry: callerPlatform ? localeCountry : null,
+    sdkProvenance: (sdkProvenanceHeader as never) ?? null,
+    geoCountry,
+    localeCountry,
+    platform: (callerPlatform ?? "unknown") as never,
+  }
+  const servedCountryResolved = resolveServed(priceInputs)
+  const shadowCountryResolved = resolveShadow(priceInputs)
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -133,6 +159,24 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     if (e instanceof RateLimitError) return rateLimitResponse(e)
     throw e
   }
+
+  // ── D11 Stage B admissibility (AC-18) ────────────────────────────────────────────────────
+  // The cut-over needs TWO independent things to be true: the operator switched it on, AND a human
+  // has actually read a recorded divergence for this tenant. The flag alone is not enough — the
+  // whole point of Stage A is that somebody looks at the delta before real money moves. Fails
+  // CLOSED: any error resolving admissibility leaves Stage A behaviour in place.
+  //
+  // read_at is stamped only by `core/scripts/paycraft-record-shadow-read.sh`, never by hand.
+  let stageBAdmissible = false
+  if (Deno.env.get("PAYCRAFT_PRICE_CUTOVER") === "1") {
+    const { data: readOk, error: readErr } = await supabase.rpc("paycraft_shadow_read_recorded", {
+      p_tenant_id: tenantId,
+    })
+    stageBAdmissible = !readErr && readOk === true
+  }
+  const cutoverOn = stageBAdmissible
+  // Stage B: the shadow chain becomes the served one. Stage A: unchanged.
+  const effectiveCountry = cutoverOn ? shadowCountryResolved : servedCountryResolved
 
   // 3. Fetch components in parallel
   const [productsRes, paywallRes, providersRes, tenantRes] = await Promise.all([
@@ -226,10 +270,13 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
       }
 
       // Auto / manual mode: resolve locale-specific price from tenant_pricing rows.
+      // Stage A: servedCountryResolved.country IS localeCountry (plus the pre-existing override),
+      // so this call is byte-identical to pre-deploy. Routing it through the resolver now means the
+      // Stage B flip is a one-line change at the resolver, not surgery at the call site.
       const priceRes = await supabase.rpc("tenant_pricing_resolve", {
         p_tenant_id: tenantId,
         p_product_id: p.id,
-        p_locale: localeCountry,
+        p_locale: effectiveCountry.country,
       })
       const priceRow = priceRes.data?.[0]
       const resolved_price = priceRow
@@ -250,9 +297,35 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
         discount_percent: discountActive ? discountPercent : null,
         discount_ends_at: discountActive ? discountEndsAt : null,
         resolved_price,
+        // AC-16 — both chains travel on EVERY product row, always. A client that only ever sees
+        // the served value cannot tell a correct price from a lucky one; carrying the shadow makes
+        // the divergence observable at the point of sale, not only in the server-side log.
+        served_country: effectiveCountry.country,
+        served_provenance: effectiveCountry.provenance,
+        shadow_country: shadowCountryResolved.country,
+        shadow_provenance: shadowCountryResolved.provenance,
       }
     }),
   )
+
+  // ── AC-17: record the divergence, never let it break the response ───────────────────────
+  // Deliberately fire-and-forget with a swallowed error: this is an observability write, and a
+  // logging failure must not turn a working paywall into a 500. That is the opposite trade-off
+  // from the products query above, where an empty result IS the user-visible failure.
+  if (diverges(servedCountryResolved, shadowCountryResolved)) {
+    try {
+      await supabase.rpc("paycraft_shadow_delta_record", {
+        p_tenant_id: tenantId,
+        p_platform: callerPlatform ?? "unknown",
+        p_served_country: servedCountryResolved.country,
+        p_served_provenance: servedCountryResolved.provenance,
+        p_shadow_country: shadowCountryResolved.country,
+        p_shadow_provenance: shadowCountryResolved.provenance,
+      })
+    } catch (_e) {
+      // intentional-noop: divergence telemetry is best-effort by design.
+    }
+  }
 
   // 5. Filter providers:
   //    (a) locale-supported (null/empty supported_locales = all locales),
@@ -365,6 +438,11 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     locale: localeCountry,
     geo_country: geoCountry,
     geo_source: geoSource,
+    served_country: effectiveCountry.country,
+    served_provenance: effectiveCountry.provenance,
+    price_cutover: cutoverOn,
+    shadow_country: shadowCountryResolved.country,
+    shadow_provenance: shadowCountryResolved.provenance,
     // Phase-4 config-wins MonetizationMode passthrough — see comment above.
     mode: monetizationMode,
     cache_ttl_seconds: 3600,

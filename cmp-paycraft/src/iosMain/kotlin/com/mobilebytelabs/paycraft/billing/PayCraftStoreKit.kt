@@ -83,6 +83,17 @@ internal class UnconfiguredStoreKitClient : NativeBillingClient {
     override suspend fun sync() = Unit
     override suspend fun restore(): List<NativePurchase> = emptyList()
     override suspend fun manageSubscription(productId: String?) = Unit
+    // Returns null DELIBERATELY, and must keep doing so.
+    //
+    // It is tempting to hand back a locale-derived country here so the caller "gets something".
+    // That would be worse than nothing: CountryDetector tags whatever this returns as
+    // AUTHORITATIVE_STORE — its strongest provenance — so a device language setting would be
+    // recorded as an Apple payment-account storefront. Every downstream trust decision, including
+    // the D11 shadow-price divergence log, would then be reasoning from a fabricated signal.
+    //
+    // Null is also not a dead end: CurrencyResolver.resolveCountry falls through to
+    // PlatformInfo.country (the device/SIM region, a genuinely better signal than locale) and only
+    // then to the config locale. The unwired case degrades correctly on its own.
     override suspend fun storefrontCountry(): String? = null
     override suspend fun nativeDisplayPrice(productId: String, productType: NativeProductType): NativeDisplayPrice? =
         null

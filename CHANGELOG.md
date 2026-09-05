@@ -17,6 +17,25 @@
 - dashboard: `GET /api/products/[id]` added (was missing — F17); the pricing page renders the real
   row and shows an explicit failure state instead of a fabricated `Product` / `9.99` placeholder.
 - dashboard: D6 disclosure rendered beside the product active toggle.
+- **092** adds `paycraft_price_shadow_deltas` — the D11 Stage A divergence log — plus
+  `paycraft_shadow_delta_record` (dedups by divergence shape with an occurrence counter, rather
+  than one row per `/config` call) and `paycraft_shadow_read_recorded` (the Stage B admissibility
+  gate; fails closed).
+- `/config` now computes BOTH price-country chains. The SERVED price is unchanged (locale-derived,
+  byte-identical to pre-deploy); the SHADOW chain is the corrected precedence
+  (override → native SDK signal → server geo → locale) and every divergence is recorded. Every
+  product row and the response envelope carry `served_country`/`served_provenance` and
+  `shadow_country`/`shadow_provenance`.
+  The bug this targets: web and desktop have no SDK, so `Accept-Language` there is a *language*
+  preference — a US buyer whose browser prefers `fr-FR` is billed in EUR while the edge IP header
+  already said US. Cut-over to the shadow chain requires `PAYCRAFT_PRICE_CUTOVER=1` **and** an
+  operator-recorded read of the divergence (`core/scripts/paycraft-record-shadow-read.sh`).
+- dashboard: `customer-geo.ts` now reads `x-vercel-ip-country` and `cloudfront-viewer-country` —
+  both were documented but never present in the header array, so Vercel and CloudFront deployments
+  silently fell through to the merchant default. It also returns provenance now.
+- steady + cappy: wired the native StoreKit 2 bridge (Gradle export, `viewController(storeKit2Bridge:)`,
+  the Swift shim, and the Xcode registration). Their iOS storefront country never resolved before,
+  so an India buyer on an en-GB phone was billed in GBP. **Not yet device-verified.**
 - **091 (security)** revokes `anon`/`PUBLIC` EXECUTE on `tenant_products_upsert`,
   `tenant_pricing_upsert`, `tenant_products_delete`, `sync_event_emit`,
   `tenant_providers_set_account_label` and `_tenant_products_upsert_core`. Migration 084's
