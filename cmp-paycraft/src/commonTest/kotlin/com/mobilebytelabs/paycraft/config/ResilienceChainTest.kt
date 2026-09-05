@@ -161,8 +161,10 @@ class ResilienceChainTest {
         val decode = ConfigResult.Failed(ConfigResult.Failed.Reason.DECODE_ERROR)
         val notInit = ConfigResult.Failed(ConfigResult.Failed.Reason.NOT_INITIALIZED)
         assertTrue(offline.isRetryable)
-        assertTrue(decode.isRetryable)
-        // Retry cannot fix "billing never started up" — offering it would be a dead button.
+        // Retry cannot fix a malformed response or a billing stack that never started — offering it
+        // in either case is a dead button. The code, its own comment, and this assertion disagreed
+        // about DECODE_ERROR until the audit surfaced it.
+        assertFalse(decode.isRetryable)
         assertFalse(notInit.isRetryable)
     }
 

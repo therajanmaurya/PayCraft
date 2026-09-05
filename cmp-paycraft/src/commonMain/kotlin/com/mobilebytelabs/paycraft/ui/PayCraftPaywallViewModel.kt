@@ -424,7 +424,12 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
     private fun onContactSupportManualTransfer() {
         val state = _state.value
         val billingState = state.billingState
-        val supportEmail = state.supportEmail.ifBlank { "support@example.com" }
+        // `example.com` is RFC 2606 reserved — mail to it is guaranteed undeliverable. The blank
+        // case is reachable exactly when the user is most stranded: on the built-in (layer 4)
+        // surface no config has loaded, so state.supportEmail is still its empty default, and
+        // "Contact support" would have opened a mailto to a black hole. The SDK's own address is
+        // the same default PayCraft.kt already uses when a tenant supplies none.
+        val supportEmail = state.supportEmail.ifBlank { "support@paycraft.mobilebytesensei.com" }
 
         val email = state.userEmail ?: ""
         val conflictDevice = when (billingState) {

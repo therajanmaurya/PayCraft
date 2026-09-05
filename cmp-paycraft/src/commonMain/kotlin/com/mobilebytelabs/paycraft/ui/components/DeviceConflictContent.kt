@@ -77,7 +77,13 @@ fun ProvidePayCraftOAuthHandler(
 fun DeviceConflictContent(
     state: BillingState.DeviceConflict,
     onAction: (PayCraftPaywallAction) -> Unit,
-    otpSendsUsedToday: Int = 0,
+    // NULL means "not known", and that is the honest default. This was `Int = 0`, and no caller
+    // ever passed anything else — so the label rendered "5 of 5 codes remaining today" to a user who
+    // had already spent three of them. A confidently wrong number is worse than no number: it tells
+    // someone they have budget they do not have, and they discover otherwise by being refused.
+    // The count is available server-side; surfacing it needs a state field that does not exist yet,
+    // so until it does the line is omitted rather than fabricated.
+    otpSendsUsedToday: Int? = null,
     modifier: Modifier = Modifier,
 ) {
     val oauthHandler = LocalPayCraftOAuthHandler.current
@@ -152,17 +158,19 @@ fun DeviceConflictContent(
                 ) { Text(stringResource(Res.string.paycraft_device_conflict_gate_otp_verify)) }
             }
 
-            // The budget was already in the payload; showing it stops a user burning sends blind.
-            Text(
-                text = stringResource(
-                    Res.string.paycraft_device_conflict_otp_remaining,
-                    (state.otpDailyLimit - otpSendsUsedToday).coerceAtLeast(0),
-                    state.otpDailyLimit,
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(PayCraftTestTags.DEVICE_CONFLICT_OTP_REMAINING),
-            )
+            // Rendered only when the used-count is actually known.
+            if (otpSendsUsedToday != null) {
+                Text(
+                    text = stringResource(
+                        Res.string.paycraft_device_conflict_otp_remaining,
+                        (state.otpDailyLimit - otpSendsUsedToday).coerceAtLeast(0),
+                        state.otpDailyLimit,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(PayCraftTestTags.DEVICE_CONFLICT_OTP_REMAINING),
+                )
+            }
         } else {
             Text(
                 text = stringResource(Res.string.paycraft_device_conflict_gate_support_exhausted),

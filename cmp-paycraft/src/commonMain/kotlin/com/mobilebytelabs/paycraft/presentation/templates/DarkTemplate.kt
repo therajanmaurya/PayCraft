@@ -20,6 +20,7 @@ import com.mobilebytelabs.paycraft.model.Product
 import com.mobilebytelabs.paycraft.presentation.components.PlanCard
 import com.mobilebytelabs.paycraft.ui.components.PaymentPendingContent
 import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
+import androidx.compose.material3.darkColorScheme
 import com.mobilebytelabs.paycraft.ui.paywallRoot
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsDark
 
@@ -32,6 +33,22 @@ import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsDark
 fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit, onAction: (PayCraftPaywallAction) -> Unit = {}) {
     val bg = PayCraftBrandColorsDark.background
     val onBg = PayCraftBrandColorsDark.onBackground
+    // The shared state composables (DeviceConflictContent, OwnershipVerifiedContent,
+    // PremiumEntitlementActions) read ambient MaterialTheme.colorScheme, while this template paints
+    // a near-black brand background. Before this wrapper they inherited the HOST's scheme — in a
+    // host running lightColorScheme, `onSurfaceVariant` is a dark grey rendered on near-black, i.e.
+    // effectively invisible. The old per-arm bodies dodged it by threading `onBg` explicitly; the
+    // shared ones cannot, so the template supplies a dark scheme instead of each callee guessing.
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            surface = bg,
+            onSurface = onBg,
+            surfaceVariant = bg,
+            onSurfaceVariant = onBg,
+            background = bg,
+            onBackground = onBg,
+        ),
+    ) {
     Box(
         Modifier
             .paywallRoot(bg)
@@ -49,6 +66,7 @@ fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product)
             is BillingState.DeviceConflict -> DeviceConflictContent(state, onAction)
             is BillingState.OwnershipVerified -> OwnershipVerifiedContent(state, onAction)
         }
+    }
     }
 }
 

@@ -20,6 +20,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
+import org.jetbrains.compose.resources.stringResource
+import com.mobilebytelabs.paycraft.generated.resources.Res
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_disclaimer
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_priced_label
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_reload
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_title
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_trial_label
 import com.mobilebytelabs.paycraft.model.Product
 
 /**
@@ -48,13 +55,12 @@ fun BuiltInPaywall(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = "Upgrade",
+            text = stringResource(Res.string.paycraft_builtin_title),
             style = MaterialTheme.typography.titleLarge,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "We could not load the latest plan details, so this is a simplified view. " +
-                "Your purchase still works normally.",
+            text = stringResource(Res.string.paycraft_builtin_disclaimer),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -69,9 +75,20 @@ fun BuiltInPaywall(
                 // it shows its name and duration — never a fabricated number, because a wrong price
                 // on a purchase button is far worse than no price.
                 val label = when (product) {
-                    is Product.Subscription -> "${product.displayName} — ${product.basePrice.format()}"
-                    is Product.Lifetime -> "${product.displayName} — ${product.basePrice.format()}"
-                    is Product.Trial -> "${product.displayName} — ${product.durationDays}-day trial"
+                    is Product.Subscription -> stringResource(
+                        Res.string.paycraft_builtin_priced_label,
+                        product.displayName, product.basePrice.format(),
+                    )
+                    is Product.Lifetime -> stringResource(
+                        Res.string.paycraft_builtin_priced_label,
+                        product.displayName, product.basePrice.format(),
+                    )
+                    // The English "-day trial" suffix was concatenated onto a number; it is now a
+                    // whole parameterised phrase so a translator can order the units naturally.
+                    is Product.Trial -> stringResource(
+                        Res.string.paycraft_builtin_trial_label,
+                        product.displayName, product.durationDays,
+                    )
                 }
                 Text(label)
             }

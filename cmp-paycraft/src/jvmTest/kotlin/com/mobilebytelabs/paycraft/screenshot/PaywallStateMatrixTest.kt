@@ -32,6 +32,7 @@ import com.mobilebytelabs.paycraft.model.BillingState
 import com.mobilebytelabs.paycraft.model.OAuthProvider
 import com.mobilebytelabs.paycraft.model.SubscriptionStatus
 import com.mobilebytelabs.paycraft.model.VerificationMethod
+import com.mobilebytelabs.paycraft.presentation.templates.DarkTemplate
 import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
 import com.mobilebytelabs.paycraft.ui.components.DeviceConflictContent
 import com.mobilebytelabs.paycraft.ui.components.EmptyProductsContent
@@ -64,7 +65,9 @@ class PaywallStateMatrixTest {
                 // A host handler is provided, so the OAuth gate renders. Without one it is
                 // deliberately absent rather than dead — covered by the sibling test below.
                 ProvidePayCraftOAuthHandler(handler = { _: OAuthProvider -> }) {
-                    DeviceConflictContent(state = conflict(), onAction = {})
+                    // A real used-count is supplied here, which is the only case where the
+                    // remaining-codes line should appear at all.
+                    DeviceConflictContent(state = conflict(), onAction = {}, otpSendsUsedToday = 2)
                 }
             }
         }
@@ -87,6 +90,15 @@ class PaywallStateMatrixTest {
         setContent { DeterministicTheme { DeviceConflictContent(state = conflict(), onAction = {}) } }
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OAUTH_GOOGLE).assertDoesNotExist()
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_SUPPORT).assertIsDisplayed()
+    }
+
+    @Test
+    fun otp_remaining_line_is_absent_when_the_used_count_is_unknown() = runComposeUiTest {
+        // Regression for a permanently-wrong label: the parameter defaulted to 0 and nothing ever
+        // passed a real value, so every user was told they had their full daily budget left.
+        setContent { DeterministicTheme { DeviceConflictContent(state = conflict(), onAction = {}) } }
+        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_OTP_REMAINING).assertDoesNotExist()
+        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_SEND).assertIsDisplayed()
     }
 
     /** Support remains reachable once the OTP budget is exhausted — the only gate that always is. */
@@ -160,6 +172,40 @@ class PaywallStateMatrixTest {
         )
     }
 
+
+    /**
+     * DarkTemplate rendering DeviceConflict through the FULL template stack.
+     *
+     * Every other golden here captures a component in isolation under a fixed lightColorScheme,
+     * which is exactly why a dark-mode regression could not be seen: the shared composables read
+     * ambient `MaterialTheme.colorScheme`, and in isolation that ambient scheme is the test's, not
+     * the template's. Rendering through `DarkTemplate` is the only way this class of defect shows up.
+     */
+    @Test
+    fun dark_template_device_conflict_render() = runComposeUiTest {
+        setContent {
+            // Deliberately a LIGHT host scheme — the case that was broken. The template must impose
+            // its own dark scheme regardless of what the host app is running.
+            MaterialTheme(colorScheme = lightColorScheme()) {
+                Box(modifier = Modifier.size(width = 411.dp, height = 891.dp)) {
+                    PayCraftThemeProvider {
+                        DarkTemplate(
+                            state = conflict(),
+                            products = emptyList(),
+                            onPick = {},
+                            onRetry = {},
+                            onAction = {},
+                        )
+                    }
+                }
+            }
+        }
+        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_DEVICE_NAME).assertIsDisplayed()
+        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_SUPPORT).assertIsDisplayed()
+        onRoot().captureRoboImage(P_DARK_CONFLICT)
+        assertCaptured(P_DARK_CONFLICT)
+    }
+
     @Suppress("unused")
     private fun unusedStatusAnchor(): SubscriptionStatus? = null
 
@@ -188,5 +234,6 @@ class PaywallStateMatrixTest {
         const val P_OWNERSHIP = "$DIR/paywall_ownership_verified.png"
         const val P_EMPTY = "$DIR/paywall_empty_products.png"
         const val P_PREMIUM_ACTIONS = "$DIR/paywall_premium_actions.png"
+        const val P_DARK_CONFLICT = "$DIR/paywall_dark_device_conflict.png"
     }
 }

@@ -70,10 +70,21 @@ sealed interface ConfigResult {
     /** True when the user should be told the data may be out of date. */
     val isStale: Boolean get() = this is Stale
 
-    /** True when a retry button is worth offering — the failure might be transient. */
+    /**
+     * True when a retry button is worth offering — the failure might actually be transient.
+     *
+     * DECODE_ERROR is excluded deliberately, and this used to be inconsistent: the code returned
+     * true while PayCraft's own comment beside the throw site said offering retry for a malformed
+     * payload "would be a lie". It would be — the server returned something unparseable, and asking
+     * again returns the same thing. A button that cannot work is a dead clickable dressed as help.
+     */
     val isRetryable: Boolean
         get() = when (this) {
-            is Failed -> reason != Failed.Reason.NOT_INITIALIZED
+            is Failed -> when (reason) {
+                Failed.Reason.NOT_INITIALIZED -> false  // retry cannot start a billing stack
+                Failed.Reason.DECODE_ERROR -> false     // the response is malformed, not flaky
+                else -> true
+            }
             BuiltIn, is Stale, is Bundled -> true
             Loading, is Fresh, is Cached -> false
         }

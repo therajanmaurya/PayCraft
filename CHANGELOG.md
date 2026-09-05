@@ -79,6 +79,20 @@
   on rather than `Accept-Language`; and the edge's geo-header order and ISO-2/`XX` validation now
   match `dashboard/lib/customer-geo.ts`, which resolved five inputs differently between the two
   chains.
+- **Localisation + resilience-surface corrections.** The resilience and built-in-paywall surfaces
+  shipped with 17 hardcoded English literals — including every failure-reason body and the humanised
+  cache age — while the strings.xml rows added for those exact surfaces sat unused. All now go
+  through `stringResource`, with each age unit its own resource rather than an English suffix glued
+  to a number. **10 strings across the module (3 of them pre-existing) used Android-style `\'`
+  escaping, which Compose Resources does not process — users saw a literal backslash, e.g.
+  "You\'re offline."** Replaced with U+2019.
+  Also: `Failed(DECODE_ERROR).isRetryable` is now `false` (a malformed response is not fixed by
+  asking again — the code's own comment said so while the code did the opposite); the
+  device-conflict "N of M codes remaining today" line is omitted unless a real used-count is
+  supplied, instead of always claiming the full daily budget; `DarkTemplate` imposes a dark scheme
+  on the shared state composables, which were reading the host's scheme and rendering dark-on-black;
+  the unused `OwnershipVerifiedDialog` public API was removed; and the manual-transfer support
+  fallback no longer points at RFC 2606-reserved `support@example.com`.
 - **091 (security)** revokes `anon`/`PUBLIC` EXECUTE on `tenant_products_upsert`,
   `tenant_pricing_upsert`, `tenant_products_delete`, `sync_event_emit`,
   `tenant_providers_set_account_label` and `_tenant_products_upsert_core`. Migration 084's

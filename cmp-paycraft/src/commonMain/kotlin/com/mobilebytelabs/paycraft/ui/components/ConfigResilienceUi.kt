@@ -25,6 +25,24 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
+import org.jetbrains.compose.resources.stringResource
+import com.mobilebytelabs.paycraft.generated.resources.Res
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_age_days
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_age_hours
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_age_minutes
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_age_moments
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_age_yesterday
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_config_failed_decode_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_config_failed_decode_title
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_config_failed_generic_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_config_failed_http_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_config_failed_not_initialized_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_config_failed_title
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_offline_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_offline_title
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_retry
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_stale_body
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_stale_refresh
 import com.mobilebytelabs.paycraft.config.ConfigResult
 
 /**
@@ -40,27 +58,32 @@ fun ConfigUnavailable(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val (title, body) = when (result) {
-        is ConfigResult.Failed -> when (result.reason) {
-            ConfigResult.Failed.Reason.OFFLINE ->
-                "You appear to be offline" to
-                    "We could not load subscription options. Check your connection and try again."
-            ConfigResult.Failed.Reason.HTTP_ERROR ->
-                "Subscriptions are unavailable" to
-                    "We could not load subscription options right now. This is on our side — please try again shortly."
-            ConfigResult.Failed.Reason.DECODE_ERROR ->
-                "Something went wrong" to
-                    "We received an unexpected response while loading subscription options."
-            ConfigResult.Failed.Reason.NOT_INITIALIZED ->
-                "Subscriptions are unavailable" to
-                    "Billing has not finished starting up."
-            ConfigResult.Failed.Reason.UNKNOWN ->
-                "Subscriptions are unavailable" to
-                    "We could not load subscription options right now."
+    // Localised, not literal. These strings existed in strings.xml from the moment this surface was
+    // written — added for the AC-28 pairing — and the composable carried English literals anyway,
+    // which breaks every non-English deployment of the SDK.
+    val title: String
+    val body: String
+    when ((result as? ConfigResult.Failed)?.reason) {
+        ConfigResult.Failed.Reason.OFFLINE -> {
+            title = stringResource(Res.string.paycraft_offline_title)
+            body = stringResource(Res.string.paycraft_offline_body)
         }
-        else ->
-            "Subscriptions are unavailable" to
-                "We could not load subscription options right now."
+        ConfigResult.Failed.Reason.HTTP_ERROR -> {
+            title = stringResource(Res.string.paycraft_config_failed_title)
+            body = stringResource(Res.string.paycraft_config_failed_http_body)
+        }
+        ConfigResult.Failed.Reason.DECODE_ERROR -> {
+            title = stringResource(Res.string.paycraft_config_failed_decode_title)
+            body = stringResource(Res.string.paycraft_config_failed_decode_body)
+        }
+        ConfigResult.Failed.Reason.NOT_INITIALIZED -> {
+            title = stringResource(Res.string.paycraft_config_failed_title)
+            body = stringResource(Res.string.paycraft_config_failed_not_initialized_body)
+        }
+        else -> {
+            title = stringResource(Res.string.paycraft_config_failed_title)
+            body = stringResource(Res.string.paycraft_config_failed_generic_body)
+        }
     }
 
     Column(
@@ -92,7 +115,7 @@ fun ConfigUnavailable(
             Button(
                 onClick = onRetry,
                 modifier = Modifier.testTag(PayCraftTestTags.CONFIG_FAILED_RETRY),
-            ) { Text("Try again") }
+            ) { Text(stringResource(Res.string.paycraft_retry)) }
         }
     }
 }
@@ -120,13 +143,13 @@ fun StaleConfigNotice(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Showing saved pricing from ${humanizeAge(ageSeconds)}. Prices may have changed.",
+                text = stringResource(Res.string.paycraft_stale_body, humanizeAge(ageSeconds)),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f).testTag(PayCraftTestTags.STALE_MESSAGE),
             )
             Text(
-                text = "Refresh",
+                text = stringResource(Res.string.paycraft_stale_refresh),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.clickable(onClick = onRetry).testTag(PayCraftTestTags.STALE_REFRESH),
@@ -135,11 +158,17 @@ fun StaleConfigNotice(
     }
 }
 
-/** Rounded, human-scale age. Precision here is noise — "3 days ago" is the whole message. */
+/**
+ * Rounded, human-scale age. Precision here is noise — "3 days ago" is the whole message.
+ *
+ * Each unit is its own resource rather than an English suffix concatenated onto a number, so a
+ * translator can render the whole phrase naturally instead of receiving " min ago" to glue on.
+ */
+@Composable
 internal fun humanizeAge(seconds: Long): String = when {
-    seconds < 60 -> "moments ago"
-    seconds < 3_600 -> "${seconds / 60} min ago"
-    seconds < 86_400 -> "${seconds / 3_600} h ago"
-    seconds < 172_800 -> "yesterday"
-    else -> "${seconds / 86_400} days ago"
+    seconds < 60 -> stringResource(Res.string.paycraft_age_moments)
+    seconds < 3_600 -> stringResource(Res.string.paycraft_age_minutes, (seconds / 60).toInt())
+    seconds < 86_400 -> stringResource(Res.string.paycraft_age_hours, (seconds / 3_600).toInt())
+    seconds < 172_800 -> stringResource(Res.string.paycraft_age_yesterday)
+    else -> stringResource(Res.string.paycraft_age_days, (seconds / 86_400).toInt())
 }

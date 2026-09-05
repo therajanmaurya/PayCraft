@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -78,31 +77,4 @@ fun OwnershipVerifiedContent(
             ) { Text(stringResource(Res.string.paycraft_ownership_verified_confirm)) }
         }
     }
-}
-
-@Composable
-fun OwnershipVerifiedDialog(
-    state: BillingState.OwnershipVerified,
-    onAction: (PayCraftPaywallAction) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val deviceName = state.conflictingDeviceName ?: "the other device"
-    AlertDialog(
-        onDismissRequest = { onAction(PayCraftPaywallAction.CancelDeviceTransfer) },
-        title = { Text(stringResource(Res.string.paycraft_ownership_verified_title)) },
-        text = { Text(stringResource(Res.string.paycraft_ownership_verified_body, deviceName)) },
-        confirmButton = {
-            TextButton(
-                onClick = { onAction(PayCraftPaywallAction.ConfirmDeviceTransfer) },
-                modifier = Modifier.testTag(PayCraftTestTags.OWNERSHIP_VERIFIED_CONFIRM),
-            ) { Text(stringResource(Res.string.paycraft_ownership_verified_confirm)) }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = { onAction(PayCraftPaywallAction.CancelDeviceTransfer) },
-                modifier = Modifier.testTag(PayCraftTestTags.OWNERSHIP_VERIFIED_CANCEL),
-            ) { Text(stringResource(Res.string.paycraft_ownership_verified_cancel)) }
-        },
-        modifier = modifier.testTag(PayCraftTestTags.OWNERSHIP_VERIFIED_DIALOG),
-    )
 }

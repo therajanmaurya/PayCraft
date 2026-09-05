@@ -134,8 +134,13 @@ object PayCraftTestTags {
     /** Resolution gate 3 — manual transfer via support. */
     const val DEVICE_CONFLICT_GATE_SUPPORT = "paycraft_device_conflict_gate_support"
 
-    /** Ownership-verified confirmation dialog and its two exits. */
-    const val OWNERSHIP_VERIFIED_DIALOG = "paycraft_ownership_verified_dialog"
+    /**
+     * Ownership-verified confirmation exits.
+     *
+     * There was an OWNERSHIP_VERIFIED_DIALOG tag here too, on a dialog wrapper no template ever
+     * called — all four render the content inline. Unused public API that nobody can tell is unused
+     * is a trap for the next reader, so both went.
+     */
     const val OWNERSHIP_VERIFIED_CONFIRM = "paycraft_ownership_verified_confirm"
     const val OWNERSHIP_VERIFIED_CANCEL = "paycraft_ownership_verified_cancel"
 
