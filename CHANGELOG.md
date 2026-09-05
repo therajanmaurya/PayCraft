@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **088** introduces the Offering → Package → Product model (`tenant_offerings`, `tenant_packages`)
+  with RevenueCat-reserved role identifiers, plus a same-file backfill that maps every existing
+  product to a role and RAISEs rather than leaving one unmapped. Role arms mirror the existing
+  `tenant_products_interval_check` vocabulary (`month`/`quarter`/`semiannual`/`year`), not ISO-8601.
+- **089** retires the 8× `tenant_products_upsert` copy-paste chain: `_tenant_products_upsert_core`
+  owns the single column projection, the wrapper owns the auth guard and delegates. The core's
+  EXECUTE is revoked from anon/authenticated — it is SECURITY DEFINER without an ownership guard.
+- **090** locks D6: `is_entitlement_current` treats a NULL expiry as "does not expire", and the
+  entitlement read path never joins `tenant_products.active`, so disabling a product hides it from
+  the paywall but can never revoke a purchased entitlement. Adds `is_premium_by_app_user`.
+- `/config` now fails loudly when the products query errors, instead of degrading a database
+  failure into an empty product array behind HTTP 200.
+- dashboard: `GET /api/products/[id]` added (was missing — F17); the pricing page renders the real
+  row and shows an explicit failure state instead of a fabricated `Product` / `9.99` placeholder.
+- dashboard: D6 disclosure rendered beside the product active toggle.
+
 ## [Unreleased] — unified country detection + per-platform provider routing
 
 Adds a unified, cross-platform buyer-country signal and platform-aware provider selection, without touching the shipped 2.3.x storefront/native-price billing core. See `paycraft-provider-platform-onboarding` epic.

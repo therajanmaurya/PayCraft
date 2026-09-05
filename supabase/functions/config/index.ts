@@ -166,6 +166,26 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
   //    vs `livePaymentLinks` from each provider based on the apiKey prefix —
   //    no server-side product filtering required. (Migration 069 dropped the
   //    legacy is_test_only product flag + test_devices allow-list.)
+  // AC-11 / D6 note: a disabled product is ALREADY absent here — `tenant_products_list`
+  // (migration 028) filters `active = true` server-side, so the disable toggle takes effect at
+  // the RPC rather than in this projection. Deliberately NOT re-filtering: a second filter in
+  // this file would drift from the RPC the day someone changes one and not the other.
+  //
+  // What was genuinely missing is the error check below. `productsRes.data ?? []` silently
+  // degrades a DATABASE FAILURE into an empty product array and a 200 response — a paywall that
+  // renders "nothing for sale" while the real cause is an outage, which is indistinguishable to
+  // the SDK from a tenant who has configured no products. Failing loudly is the only way the
+  // client can tell "no products" from "could not read products" and show a retry instead.
+  if (productsRes.error) {
+    return new Response(
+      JSON.stringify({
+        error: "products_query_failed",
+        detail: productsRes.error.message,
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    )
+  }
+
   const pricedProducts = await Promise.all(
     (productsRes.data ?? []).map(async (p: Record<string, unknown>) => {
       const trialEnabled = p.trial_enabled === undefined || p.trial_enabled === null
