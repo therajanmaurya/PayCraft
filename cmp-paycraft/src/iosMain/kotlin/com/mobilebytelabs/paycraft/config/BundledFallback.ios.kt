@@ -12,6 +12,10 @@ import platform.Foundation.stringWithContentsOfFile
  * returns null and the chain moves on, which is the common case for apps shipping without a
  * fallback.
  */
+// stringWithContentsOfFile takes an NSError** out-parameter, which is a CPointer — cinterop's
+// ExperimentalForeignApi. The opt-in is required at the call site; without it this file does not
+// compile at all, and nothing compiled it until the iOS publication ran.
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 actual fun readBundledSuiteConfigJsonOrNull(): String? = runCatching {
     val path = NSBundle.mainBundle.pathForResource(
         BUNDLED_FALLBACK_FILENAME.removeSuffix(".json"),
