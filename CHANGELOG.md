@@ -63,6 +63,22 @@
   dead, since the SDK cannot mint an `idToken` itself.
   26 localised strings, new paywall-state test tags, and 13 Roborazzi goldens each paired with a
   named semantic assertion so no golden can be captured from a blank surface.
+- **093** constrains `paycraft_price_shadow_deltas.served_provenance` / `shadow_provenance` to the
+  provenance vocabulary. 092 constrained `platform` but not these, and the edge function cast a
+  client-supplied `X-PayCraft-Country-Provenance` header past the type system — so arbitrary text
+  reached the table an operator reads before authorising a price cut-over. The edge now whitelists
+  the header as well; this is the column-level half.
+- **Price-chain corrections (Stage A).** `resolveServed` no longer honours `?country=`/`x-country`.
+  It had been doing so on the stated assumption that an override was already priced pre-deploy —
+  it was not (pre-deploy read only `apiKey` and priced unconditionally off `Accept-Language`), so
+  any request carrying an override was priced differently after the deploy than before. That is the
+  one thing D11's staging exists to prevent. The override now lives only in the shadow chain.
+  Also: the SDK arm is native-gated BEFORE the provenance header is consulted, so a web caller
+  sending `X-PayCraft-Country-Provenance: storefront` can no longer be priced off its own
+  Accept-Language; provider filtering and the response `locale` follow the country actually priced
+  on rather than `Accept-Language`; and the edge's geo-header order and ISO-2/`XX` validation now
+  match `dashboard/lib/customer-geo.ts`, which resolved five inputs differently between the two
+  chains.
 - **091 (security)** revokes `anon`/`PUBLIC` EXECUTE on `tenant_products_upsert`,
   `tenant_pricing_upsert`, `tenant_products_delete`, `sync_event_emit`,
   `tenant_providers_set_account_label` and `_tenant_products_upsert_core`. Migration 084's

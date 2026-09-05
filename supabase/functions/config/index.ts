@@ -97,10 +97,26 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
   // it below the store storefront and above the device locale — one consistent signal on every
   // platform, including web/desktop where no store storefront exists. Null when the edge did not
   // attach a header (local dev / unknown host); the SDK degrades to device/locale in that case.
-  const geoCountry =
-    (req.headers.get("x-vercel-ip-country") ??
-      req.headers.get("cf-ipcountry") ??
-      req.headers.get("cloudfront-viewer-country"))?.trim()?.toUpperCase() || null
+  // Header order and validation are deliberately IDENTICAL to dashboard/lib/customer-geo.ts.
+  // They were not, and the two chains disagreed on five real inputs — a buyer priced one way in the
+  // app and another way through web checkout (AC-19). Cloudflare first because that is the runtime
+  // this deploys on; the ISO-2 shape check and the "XX" rejection are the dashboard's, which were
+  // the stricter and more correct of the two: "XX" is the CDN's *unknown-country* placeholder, so
+  // treating it as a country prices someone in a country that does not exist, and a 3-letter code
+  // is not an ISO-3166-alpha-2 value at all.
+  const GEO_HEADERS = [
+    "cf-ipcountry",
+    "x-vercel-ip-country",
+    "cloudfront-viewer-country",
+    "x-country",
+    "x-geo-country",
+  ] as const
+  const ISO2 = /^[A-Z]{2}$/
+  let geoCountry: string | null = null
+  for (const h of GEO_HEADERS) {
+    const raw = req.headers.get(h)?.trim()?.toUpperCase()
+    if (raw && ISO2.test(raw) && raw !== "XX") { geoCountry = raw; break }
+  }
   const geoSource = geoCountry ? "SERVER_IP_GEO" : "ABSENT"
 
   // Caller platform (SDK sends X-PayCraft-Platform: ios|android|desktop|web). Drives per-platform
@@ -117,15 +133,31 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
   // A real browser has no such header, so its Accept-Language stays a language preference and the
   // shadow chain falls through to server geo — which is the actual revenue fix (a US buyer whose
   // browser prefers fr-FR is currently billed in EUR).
-  const overrideCountry =
-    (new URL(req.url).searchParams.get("country") ??
-      req.headers.get("x-country"))?.trim()?.toUpperCase() || null
-  const sdkProvenanceHeader =
+  // `?country=` ONLY. `x-country` used to be an override alias here while the dashboard treated it
+  // as a geo header — the same request resolved with a different PROVENANCE depending on which
+  // entry point served it. An override should be something a caller states explicitly in the URL,
+  // not a header a CDN might inject on its behalf. It is a geo header on both sides now.
+  const overrideRaw = new URL(req.url).searchParams.get("country")?.trim()?.toUpperCase() || null
+  const overrideCountry = overrideRaw && ISO2.test(overrideRaw) && overrideRaw !== "XX"
+    ? overrideRaw
+    : null
+  // Whitelisted, not cast. This value is client-supplied and flows into every product row AND into
+  // paycraft_price_shadow_deltas — the table an operator reads before authorising the Stage B
+  // cut-over. An `as never` cast let arbitrary text through, so the audit trail the release
+  // decision rests on was shapeable by any caller.
+  const PROVENANCE_VALUES = [
+    "override", "storefront", "server_geo", "device", "locale", "default",
+  ] as const
+  const rawProvenance =
     (req.headers.get("x-paycraft-country-provenance") ?? "").trim().toLowerCase() || null
+  const sdkProvenanceHeader =
+    rawProvenance && (PROVENANCE_VALUES as readonly string[]).includes(rawProvenance)
+      ? rawProvenance
+      : null
   const priceInputs = {
     overrideCountry,
     sdkCountry: callerPlatform ? localeCountry : null,
-    sdkProvenance: (sdkProvenanceHeader as never) ?? null,
+    sdkProvenance: sdkProvenanceHeader as never,
     geoCountry,
     localeCountry,
     platform: (callerPlatform ?? "unknown") as never,
@@ -341,7 +373,10 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     }) => {
       const localeOk = !pr.supported_locales ||
         pr.supported_locales.length === 0 ||
-        pr.supported_locales.includes(localeCountry)
+        // effectiveCountry, not localeCountry: after cut-over a buyer priced on server_geo (say IN)
+        // would otherwise only be offered providers whose supported_locales carry their
+        // Accept-Language country (say US) — priced in one country, unable to pay in it.
+        pr.supported_locales.includes(effectiveCountry.country)
       const bySku = isTestMode ? pr.test_payment_links : pr.live_payment_links
       const linksOk = !!bySku && Object.values(bySku).some(perCurrency =>
         !!perCurrency && Object.keys(perCurrency).length > 0
@@ -435,7 +470,9 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     products: pricedProducts,
     providers: orderedProviders,
     paywall: paywallWithLegal,
-    locale: localeCountry,
+    // The country actually priced on. Emitting the raw Accept-Language country here would make
+    // SuiteConfig.locale disagree with served_country the moment cut-over lands.
+    locale: effectiveCountry.country,
     geo_country: geoCountry,
     geo_source: geoSource,
     served_country: effectiveCountry.country,

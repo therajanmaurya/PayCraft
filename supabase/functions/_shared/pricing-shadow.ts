@@ -68,9 +68,14 @@ const NATIVE: ReadonlySet<Platform> = new Set<Platform>(["android", "ios"]);
  */
 function sdkSignal(i: PriceInputs): Resolved | null {
   if (!i.sdkCountry) return null;
+  // The NATIVE gate is checked BEFORE the provenance header, and the order is load-bearing.
+  // Previously an explicit `sdkProvenance` short-circuited it, so a web client sending
+  // `X-PayCraft-Platform: web` with `X-PayCraft-Country-Provenance: storefront` reached the SDK arm
+  // and was priced off its own Accept-Language — the exact thing AC-15 says web must never do.
+  // There is no storefront on the web, so no header a client sends can make one exist.
+  if (!NATIVE.has(i.platform)) return null;
   if (i.sdkProvenance) return { country: i.sdkCountry, provenance: i.sdkProvenance };
-  if (NATIVE.has(i.platform)) return { country: i.sdkCountry, provenance: "device" };
-  return null;
+  return { country: i.sdkCountry, provenance: "device" };
 }
 
 /**
@@ -90,15 +95,20 @@ export function resolveShadow(i: PriceInputs): Resolved {
 }
 
 /**
- * The OLD chain, preserved byte-for-byte for D11 Stage A: price off Accept-Language alone.
+ * The OLD chain, preserved byte-for-byte for D11 Stage A: price off Accept-Language ALONE.
  *
- * An override was already honoured upstream before this phase, so it stays in the served chain —
- * excluding it here would make Stage A change behaviour, which is the one thing Stage A must not do.
+ * CORRECTED — this previously honoured `overrideCountry`, on the stated assumption that an override
+ * "was already honoured upstream before this phase". That assumption was wrong and was never
+ * checked: pre-deploy `config/index.ts` read only `apiKey` from the query string and passed
+ * `p_locale: localeCountry` unconditionally. There was no override path anywhere in the priced
+ * request. Honouring one here meant any request carrying `?country=` or `x-country` was priced
+ * DIFFERENTLY than before the deploy — which is precisely the thing Stage A exists to guarantee
+ * cannot happen, and it would have happened silently.
+ *
+ * The override still exists, in `resolveShadow`, where it can only affect a price after the Stage B
+ * cut-over that a human has to authorise.
  */
 export function resolveServed(i: PriceInputs): Resolved {
-  if (i.overrideCountry) {
-    return { country: i.overrideCountry.toUpperCase(), provenance: "override" };
-  }
   return { country: i.localeCountry.toUpperCase(), provenance: "locale" };
 }
 

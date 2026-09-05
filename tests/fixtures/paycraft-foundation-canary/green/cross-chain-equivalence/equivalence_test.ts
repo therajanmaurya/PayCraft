@@ -22,6 +22,33 @@ function mockReq(url: string, headers: Record<string, string>): never {
   } as never;
 }
 
+
+/**
+ * The edge's header→geo resolution, mirroring supabase/functions/config/index.ts.
+ *
+ * These fixtures previously hand-fed `geoCountry` into resolveShadow, which meant the header
+ * PARSING — the half the two chains actually disagreed on — was never compared at all. Five real
+ * disagreements hid behind that: inverted header priority, `x-country` treated as an override on
+ * one side and geo on the other, `x-geo-country` honoured on one side only, and the CDN's "XX"
+ * unknown-country placeholder plus 3-letter codes accepted as countries by the edge.
+ */
+const GEO_HEADERS = [
+  "cf-ipcountry",
+  "x-vercel-ip-country",
+  "cloudfront-viewer-country",
+  "x-country",
+  "x-geo-country",
+] as const;
+const ISO2 = /^[A-Z]{2}$/;
+
+function edgeGeoFromHeaders(headers: Record<string, string>): string | null {
+  for (const h of GEO_HEADERS) {
+    const raw = headers[h]?.trim()?.toUpperCase();
+    if (raw && ISO2.test(raw) && raw !== "XX") return raw;
+  }
+  return null;
+}
+
 interface Fixture {
   name: string;
   query: string;
@@ -91,3 +118,56 @@ Deno.test("AC-19 no signal at all: dashboard falls to merchant default, edge to 
   });
   assertEquals(edge, { country: "FR", provenance: "locale" });
 });
+
+// ── The five disagreements an adversarial audit found, now pinned ────────────────────────────
+const adversarial: Array<{ name: string; headers: Record<string, string>; merchant: string | null }> = [
+  {
+    name: "both cf-ipcountry and x-vercel-ip-country present — priority order must agree",
+    headers: { "cf-ipcountry": "IN", "x-vercel-ip-country": "US" },
+    merchant: "GB",
+  },
+  {
+    name: "x-country alone — geo on BOTH sides, never an override on one",
+    headers: { "x-country": "DE" },
+    merchant: "GB",
+  },
+  {
+    name: "x-geo-country alone — honoured on both sides, not just the dashboard",
+    headers: { "x-geo-country": "BR" },
+    merchant: "GB",
+  },
+  {
+    name: "XX is the CDN unknown-country placeholder, not a country",
+    headers: { "cf-ipcountry": "XX" },
+    merchant: "GB",
+  },
+  {
+    name: "a 3-letter code is not ISO-3166-alpha-2",
+    headers: { "cf-ipcountry": "USA" },
+    merchant: "GB",
+  },
+];
+
+for (const c of adversarial) {
+  Deno.test(`AC-19 cross-chain: ${c.name}`, () => {
+    const dash = detectCustomerCountryWithProvenance(
+      mockReq("https://x/api/checkout-options", c.headers),
+      c.merchant,
+    );
+    const geo = edgeGeoFromHeaders(c.headers);
+    const edge = resolveShadow({
+      overrideCountry: null, sdkCountry: null, sdkProvenance: null,
+      geoCountry: geo, localeCountry: "US", platform: "web",
+    });
+    if (geo === null) {
+      // Neither side found a usable geo signal. The known, accepted asymmetry applies: the
+      // dashboard knows which merchant is being checked out and falls back to their market; the
+      // edge answers for an SDK that already has a locale. Both are last-resort arms.
+      assertEquals(dash.provenance, "default");
+      assertEquals(edge.provenance, "locale");
+      return;
+    }
+    assertEquals(dash.country, edge.country, "country mismatch across chains");
+    assertEquals(dash.provenance, edge.provenance, "provenance mismatch across chains");
+  });
+}
