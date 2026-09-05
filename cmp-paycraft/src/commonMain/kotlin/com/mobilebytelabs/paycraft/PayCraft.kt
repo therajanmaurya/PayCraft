@@ -533,8 +533,26 @@ object PayCraft {
      * carried a "persistent cache is a TODO" note and decoded straight into memory. So the SDK had
      * an offline story on paper and none in practice.
      */
-    private fun configCacheOrNull(): ConfigCache? =
-        runCatching { KoinPlatform.getKoinOrNull()?.getOrNull<ConfigCache>() }.getOrNull()
+    /**
+     * Last successfully-resolved ConfigCache.
+     *
+     * The lookup goes through Koin, which is not guaranteed to be up at every moment this is
+     * called — the graph may not have started yet at cold launch, and a host that tears it down
+     * (or a test that stops it) makes a previously-working lookup start returning null. Losing the
+     * reference means the resilience chain silently skips layer 2 and serves a bundled or built-in
+     * paywall to a user whose own cached config was sitting right there.
+     *
+     * Holding the first successful resolution costs one reference and removes that whole class of
+     * timing-dependent behaviour.
+     */
+    private var memoizedConfigCache: ConfigCache? = null
+
+    private fun configCacheOrNull(): ConfigCache? {
+        memoizedConfigCache?.let { return it }
+        val resolved = runCatching { KoinPlatform.getKoinOrNull()?.getOrNull<ConfigCache>() }.getOrNull()
+        if (resolved != null) memoizedConfigCache = resolved
+        return resolved
+    }
 
     /**
      * Publish the last-known-good config from disk, synchronously, before any network call.
@@ -571,6 +589,7 @@ object PayCraft {
     internal fun resetConfigStateForTesting() {
         _suiteConfigFlow.value = null
         _configResultFlow.value = ConfigResult.Loading
+        memoizedConfigCache = null
     }
 
     private fun fallBackThroughChain(reason: ConfigResult.Failed.Reason, detail: String?) {

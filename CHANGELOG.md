@@ -50,6 +50,19 @@
 - `ConfigClient` is **deprecated** — it was never wired into the real fetch path, so its
   `catch → cache.read()` fallback never ran. That shape now lives inline in `PayCraft`. Kept rather
   than deleted because it is public API of a published artifact.
+- **Paywall states (AC-25..AC-28)** — the three dead-end `BillingState` arms now have real
+  surfaces. `DeviceConflict` names the conflicting device and offers all three resolution gates
+  (host-driven OAuth, emailed one-time code, support) instead of two hardcoded lines that discarded
+  the whole payload. `OwnershipVerified` shows an explicit transfer confirmation rather than
+  claiming "your subscription is now active" before the transfer had happened. Empty-products
+  renders an explanation and a retry instead of a disabled buy button. The premium arm exposes
+  Restore and Manage subscription.
+  Adds `PayCraftPaywallAction.SendOtpCode` — `BillingManager.requestOtpVerification()` existed with
+  nothing dispatching to it, so the OTP gate could be verified but never started. OAuth is driven by
+  a host-supplied `LocalPayCraftOAuthHandler`; without one the gate is omitted rather than rendered
+  dead, since the SDK cannot mint an `idToken` itself.
+  26 localised strings, new paywall-state test tags, and 13 Roborazzi goldens each paired with a
+  named semantic assertion so no golden can be captured from a blank surface.
 - **091 (security)** revokes `anon`/`PUBLIC` EXECUTE on `tenant_products_upsert`,
   `tenant_pricing_upsert`, `tenant_products_delete`, `sync_event_emit`,
   `tenant_providers_set_account_label` and `_tenant_products_upsert_core`. Migration 084's

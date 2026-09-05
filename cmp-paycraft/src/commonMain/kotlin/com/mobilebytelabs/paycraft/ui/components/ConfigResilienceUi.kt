@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
+import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
 import com.mobilebytelabs.paycraft.config.ConfigResult
 
 /**
@@ -76,9 +78,21 @@ fun ConfigUnavailable(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
+            // Tagged per-reason so AC-28 can pair the offline and http-error goldens separately —
+            // they differ only in wording, and the wording is the whole product decision.
+            modifier = Modifier.testTag(
+                if ((result as? ConfigResult.Failed)?.reason == ConfigResult.Failed.Reason.OFFLINE) {
+                    PayCraftTestTags.OFFLINE_MESSAGE
+                } else {
+                    PayCraftTestTags.CONFIG_FAILED_MESSAGE
+                },
+            ),
         )
         if (result.isRetryable) {
-            Button(onClick = onRetry) { Text("Try again") }
+            Button(
+                onClick = onRetry,
+                modifier = Modifier.testTag(PayCraftTestTags.CONFIG_FAILED_RETRY),
+            ) { Text("Try again") }
         }
     }
 }
@@ -109,13 +123,13 @@ fun StaleConfigNotice(
                 text = "Showing saved pricing from ${humanizeAge(ageSeconds)}. Prices may have changed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag(PayCraftTestTags.STALE_MESSAGE),
             )
             Text(
                 text = "Refresh",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable(onClick = onRetry),
+                modifier = Modifier.clickable(onClick = onRetry).testTag(PayCraftTestTags.STALE_REFRESH),
             )
         }
     }

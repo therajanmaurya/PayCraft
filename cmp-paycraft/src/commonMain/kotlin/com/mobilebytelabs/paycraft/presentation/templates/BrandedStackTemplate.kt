@@ -33,6 +33,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
+import com.mobilebytelabs.paycraft.ui.components.PremiumEntitlementActions
+import com.mobilebytelabs.paycraft.ui.components.OwnershipVerifiedContent
+import com.mobilebytelabs.paycraft.ui.components.DeviceConflictContent
+import com.mobilebytelabs.paycraft.ui.PayCraftPaywallAction
 import com.mobilebytelabs.paycraft.config.PaywallDto
 import com.mobilebytelabs.paycraft.config.ValuePropTriple
 import com.mobilebytelabs.paycraft.model.BillingState
@@ -69,6 +73,7 @@ fun BrandedStackTemplate(
     products: List<Product>,
     onPickProduct: (Product) -> Unit,
     onRetry: () -> Unit,
+    onAction: (PayCraftPaywallAction) -> Unit = {},
 ) {
     val tokens = PayCraftTheme
     // Bounds + background belong to whoever hosts us: full-screen → we paint; sheet → the sheet
@@ -77,11 +82,14 @@ fun BrandedStackTemplate(
         when (state) {
             is BillingState.Loading -> BrandedStackLoading()
             is BillingState.Free -> BrandedStackFree(products, onPickProduct)
-            is BillingState.Premium -> BrandedStackPremium(state)
+            is BillingState.Premium -> Column {
+                BrandedStackPremium(state)
+                PremiumEntitlementActions(onAction)
+            }
             is BillingState.Error -> BrandedStackError(state.message, onRetry)
             is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
-            is BillingState.DeviceConflict -> BrandedStackDeviceConflict(state)
-            is BillingState.OwnershipVerified -> BrandedStackOwnershipVerified(state)
+            is BillingState.DeviceConflict -> DeviceConflictContent(state, onAction)
+            is BillingState.OwnershipVerified -> OwnershipVerifiedContent(state, onAction)
         }
     }
 }
@@ -307,60 +315,6 @@ private fun BrandedStackError(msg: String, onRetry: () -> Unit) {
             ),
             shape = RoundedCornerShape(26.dp),
         ) { Text("Retry") }
-    }
-}
-
-@Composable
-private fun BrandedStackDeviceConflict(s: BillingState.DeviceConflict) {
-    val tokens = PayCraftTheme
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = "Device limit reached",
-            color = tokens.colors.onSurface,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = "Your account is active on another device. Sign in there or contact support.",
-            color = tokens.colors.onSurfaceVariant,
-            fontSize = 14.sp,
-        )
-    }
-}
-
-@Composable
-private fun BrandedStackOwnershipVerified(s: BillingState.OwnershipVerified) {
-    val tokens = PayCraftTheme
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Check,
-            contentDescription = null,
-            tint = tokens.colors.accent,
-            modifier = Modifier.size(48.dp),
-        )
-        Text(
-            text = "Verified",
-            color = tokens.colors.onSurface,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = "Your subscription is now active on this device.",
-            color = tokens.colors.onSurfaceVariant,
-            fontSize = 14.sp,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 

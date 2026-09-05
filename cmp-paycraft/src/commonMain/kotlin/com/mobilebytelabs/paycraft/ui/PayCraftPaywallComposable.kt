@@ -393,6 +393,7 @@ private fun PayCraftPaywallSurface(
                         onAction(PayCraftPaywallAction.SelectPlan(product.toBillingPlan(config)))
                     },
                     onRetry = { onAction(PayCraftPaywallAction.RefreshStatus) },
+                    onAction = onAction,
                 )
             }
         }

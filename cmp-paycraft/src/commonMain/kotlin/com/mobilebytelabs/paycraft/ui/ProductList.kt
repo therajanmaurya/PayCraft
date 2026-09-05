@@ -49,6 +49,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mobilebytelabs.paycraft.LocalPayCraftConfig
+import com.mobilebytelabs.paycraft.ui.PayCraftPaywallAction
+import com.mobilebytelabs.paycraft.ui.components.EmptyProductsContent
 import com.mobilebytelabs.paycraft.config.PaywallDto
 import com.mobilebytelabs.paycraft.generated.resources.Res
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_trial_disclosure_body
@@ -93,6 +95,9 @@ fun ProductList(
     recommendedSku: String? = null,
     monthlyBaselineCents: Int? = null,
     modifier: Modifier = Modifier,
+    // Defaulted so every existing caller compiles unchanged; used only by the empty branch to
+    // dispatch a retry.
+    onAction: (PayCraftPaywallAction) -> Unit = {},
 ) {
     val paywall = LocalPayCraftConfig.current?.paywall ?: PaywallDto()
     val ctaLabel = paywall.ctaContinue.ifBlank { "Continue" }
@@ -109,6 +114,18 @@ fun ProductList(
     }
     val recommended = items.singleOrNull { it.isRecommended }
     val trialEligibleRow = items.firstOrNull { it.isTrialEligible }
+
+    // An empty product list previously fell through to the normal layout: hero, value props, an
+    // empty list, and a DISABLED buy button with no explanation. A disabled control with no
+    // adjacent reason is indistinguishable from a broken app, and there was no way to retry.
+    //
+    // Deliberately checked on `items` (the derived display rows) rather than `products`, so a list
+    // that is non-empty but yields no renderable row lands here too instead of rendering a hero
+    // above nothing.
+    if (items.isEmpty()) {
+        EmptyProductsContent(onAction = onAction, modifier = modifier)
+        return
+    }
 
     Column(
         modifier = modifier

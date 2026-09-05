@@ -22,6 +22,10 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
+import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
@@ -52,6 +56,8 @@ class ResilienceSurfaceScreenshotTest {
                 )
             }
         }
+        onNodeWithTag(PayCraftTestTags.OFFLINE_MESSAGE).assertIsDisplayed()
+        onNodeWithTag(PayCraftTestTags.CONFIG_FAILED_RETRY).assertIsDisplayed()
         onRoot().captureRoboImage(PATH_UNAVAILABLE)
         assertCaptured(PATH_UNAVAILABLE)
     }
@@ -73,6 +79,8 @@ class ResilienceSurfaceScreenshotTest {
                 )
             }
         }
+        onNodeWithTag(PayCraftTestTags.CONFIG_FAILED_MESSAGE).assertIsDisplayed()
+        onNodeWithTag(PayCraftTestTags.CONFIG_FAILED_RETRY).assertIsDisplayed()
         onRoot().captureRoboImage(PATH_HTTP_ERROR)
         assertCaptured(PATH_HTTP_ERROR)
     }
@@ -87,6 +95,8 @@ class ResilienceSurfaceScreenshotTest {
                 StaleConfigNotice(ageSeconds = 3L * 86_400L, onRetry = {})
             }
         }
+        onNodeWithTag(PayCraftTestTags.STALE_MESSAGE).assertIsDisplayed()
+        onNodeWithTag(PayCraftTestTags.STALE_REFRESH).assertIsDisplayed()
         onRoot().captureRoboImage(PATH_STALE)
         assertCaptured(PATH_STALE)
     }
@@ -121,6 +131,10 @@ class ResilienceSurfaceScreenshotTest {
                 )
             }
         }
+        // One tagged button PER product, so this asserts on the collection: the built-in paywall
+        // must offer at least one thing to buy, which is the only reason it renders at all.
+        onAllNodesWithTag(PayCraftTestTags.PAYWALL_CTA)[0].assertIsDisplayed()
+        onNodeWithTag(PayCraftTestTags.CONFIG_FAILED_RETRY).assertIsDisplayed()
         onRoot().captureRoboImage(PATH_BUILTIN)
         assertCaptured(PATH_BUILTIN)
     }

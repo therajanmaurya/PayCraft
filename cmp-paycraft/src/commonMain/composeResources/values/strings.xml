@@ -149,4 +149,43 @@
     <string name="paycraft_trial_plan_terms">{days}-day free trial, then {price}</string>
     <string name="paycraft_trial_disclosure_title">{days}-day free trial included</string>
     <string name="paycraft_trial_disclosure_body">Your free trial converts to a paid subscription automatically when it ends. Cancel anytime before then in your store subscription settings to avoid being charged.</string>
+
+    <!-- ═══ Phase 3b — paywall states (AC-25..AC-28) ═══ -->
+
+    <!-- Device conflict (AC-25). The payload carries the conflicting device name, the OTP budget
+         and a support address; the old two-line body discarded all three, which is why this state
+         was a dead end — the user was told to "sign in there" with no way to do it from here. -->
+    <string name="paycraft_device_conflict_title">Device limit reached</string>
+    <string name="paycraft_device_conflict_body">Your subscription is active on %1$s. Verify ownership here to transfer it, or contact support.</string>
+    <string name="paycraft_device_conflict_account">Account: %1$s</string>
+    <string name="paycraft_device_conflict_gate_oauth_google">Sign in with Google</string>
+    <string name="paycraft_device_conflict_gate_oauth_apple">Sign in with Apple</string>
+    <string name="paycraft_device_conflict_gate_otp_send">Email me a code</string>
+    <string name="paycraft_device_conflict_gate_otp_hint">6-digit code</string>
+    <string name="paycraft_device_conflict_gate_otp_verify">Verify code</string>
+    <string name="paycraft_device_conflict_otp_remaining">%1$d of %2$d codes remaining today</string>
+    <string name="paycraft_device_conflict_gate_support">Contact %1$s</string>
+    <string name="paycraft_device_conflict_gate_support_exhausted">Daily code limit reached — contact support</string>
+
+    <!-- Ownership verified (AC-25) — the confirmation before a transfer deactivates the other
+         device. Destructive for the other device, so it is an explicit confirm, never implicit. -->
+    <string name="paycraft_ownership_verified_title">Transfer subscription</string>
+    <string name="paycraft_ownership_verified_body">Deactivate %1$s and transfer your subscription to this device?</string>
+    <string name="paycraft_ownership_verified_confirm">Transfer here</string>
+    <string name="paycraft_ownership_verified_cancel">Cancel</string>
+
+    <!-- Empty products (AC-26) — previously a disabled button and nothing else. -->
+    <string name="paycraft_empty_products_title">No plans available right now</string>
+    <string name="paycraft_empty_products_body">We couldn\'t load subscription plans. This is usually temporary — please try again.</string>
+    <string name="paycraft_empty_products_retry">Retry</string>
+
+    <!-- Premium entitlement operations (AC-27) — the two things a paying customer needs and
+         previously had no route to from the premium arm. -->
+    <string name="paycraft_premium_restore">Restore purchases</string>
+    <string name="paycraft_premium_manage">Manage subscription</string>
+
+    <!-- Phase 3a surfaces, given localised copy here so AC-28 can pair every state. -->
+    <string name="paycraft_config_failed_body">We couldn\'t reach the subscription service.</string>
+    <string name="paycraft_offline_body">You\'re offline. Reconnect to load the latest plans.</string>
+    <string name="paycraft_stale_body">Showing plans cached %1$s ago.</string>
 </resources>

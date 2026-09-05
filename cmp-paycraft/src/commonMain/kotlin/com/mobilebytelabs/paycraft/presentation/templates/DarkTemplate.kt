@@ -1,6 +1,10 @@
 package com.mobilebytelabs.paycraft.presentation.templates
 
 import androidx.compose.foundation.layout.Arrangement
+import com.mobilebytelabs.paycraft.ui.components.PremiumEntitlementActions
+import com.mobilebytelabs.paycraft.ui.components.OwnershipVerifiedContent
+import com.mobilebytelabs.paycraft.ui.components.DeviceConflictContent
+import com.mobilebytelabs.paycraft.ui.PayCraftPaywallAction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -25,7 +29,7 @@ import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsDark
  * typography.
  */
 @Composable
-fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit) {
+fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit, onAction: (PayCraftPaywallAction) -> Unit = {}) {
     val bg = PayCraftBrandColorsDark.background
     val onBg = PayCraftBrandColorsDark.onBackground
     Box(
@@ -36,11 +40,14 @@ fun DarkTemplate(state: BillingState, products: List<Product>, onPick: (Product)
         when (state) {
             is BillingState.Loading -> DarkLoading(onBg)
             is BillingState.Free -> DarkFree(products, onPick, onBg)
-            is BillingState.Premium -> DarkActive(state, onBg)
+            is BillingState.Premium -> Column {
+                DarkActive(state, onBg)
+                PremiumEntitlementActions(onAction)
+            }
             is BillingState.Error -> DarkError(state.message, onRetry, onBg)
             is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
-            is BillingState.DeviceConflict -> DarkDeviceConflict(state, onBg)
-            is BillingState.OwnershipVerified -> DarkOwnershipVerified(state, onBg)
+            is BillingState.DeviceConflict -> DeviceConflictContent(state, onAction)
+            is BillingState.OwnershipVerified -> OwnershipVerifiedContent(state, onAction)
         }
     }
 }
@@ -94,27 +101,3 @@ private fun DarkError(msg: String, onRetry: () -> Unit, textColor: Color) {
     }
 }
 
-@Composable
-private fun DarkDeviceConflict(s: BillingState.DeviceConflict, textColor: Color) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            "Subscription bound to another device",
-            style = MaterialTheme.typography.titleLarge,
-            color = textColor,
-        )
-        Text("Last seen on ${s.conflictingDeviceName ?: "another device"}", color = textColor)
-        Text("Email: ${s.email}", color = textColor)
-    }
-}
-
-@Composable
-private fun DarkOwnershipVerified(s: BillingState.OwnershipVerified, textColor: Color) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            "Verified via ${s.verifiedVia.name.lowercase()}",
-            style = MaterialTheme.typography.titleLarge,
-            color = textColor,
-        )
-        Text("Transferring subscription to this device…", color = textColor)
-    }
-}

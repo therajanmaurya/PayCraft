@@ -52,6 +52,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsDisplayed
+import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
@@ -98,6 +100,9 @@ class PayCraftSkeletonScreenshotTest {
         }
         // Roborazzi's captureRoboImage on a SemanticsNodeInteraction snapshots the
         // whole composition rooted at that node — `onRoot()` = the full skeleton.
+        // Paired assertion (AC-28): the shimmer placeholder is what distinguishes a loading
+        // skeleton from a blank column — without it the golden would pin an empty frame.
+        onNodeWithTag(PayCraftTestTags.PAYWALL_SHIMMER).assertIsDisplayed()
         onRoot().captureRoboImage("src/jvmTest/resources/screenshots/paywall_skeleton.png")
         assertCapturedFileExists("src/jvmTest/resources/screenshots/paywall_skeleton.png")
     }
@@ -120,6 +125,8 @@ class PayCraftSkeletonScreenshotTest {
                 )
             }
         }
+        // Paired assertion (AC-28): the content paywall must offer a purchase.
+        onNodeWithTag(PayCraftTestTags.PAYWALL_CTA).assertIsDisplayed()
         onRoot().captureRoboImage("src/jvmTest/resources/screenshots/paywall_content.png")
         assertCapturedFileExists("src/jvmTest/resources/screenshots/paywall_content.png")
     }
@@ -144,6 +151,9 @@ class PayCraftSkeletonScreenshotTest {
                 )
             }
         }
+        // Paired assertion (AC-28): the reassurance copy is the whole point of this state — it is
+        // what stops a user re-paying while a charge is still settling.
+        onNodeWithTag(PayCraftTestTags.PAYMENT_PENDING_REASSURANCE).assertIsDisplayed()
         onRoot().captureRoboImage("src/jvmTest/resources/screenshots/payment_pending.png")
         assertCapturedFileExists("src/jvmTest/resources/screenshots/payment_pending.png")
     }
@@ -200,6 +210,9 @@ class PayCraftSkeletonScreenshotTest {
         val hostHeight = onNodeWithTag(HOST_TAG).getUnclippedBoundsInRoot().height
         val paywallHeight = onNodeWithTag(SHEET_PAYWALL_TAG).getUnclippedBoundsInRoot().height
 
+        // Paired assertion (AC-28): the point of sheet mode is that the paywall CTA is present
+        // OVER the host, so assert it rather than trusting the bitmap.
+        onNodeWithTag(PayCraftTestTags.PAYWALL_CTA).assertIsDisplayed()
         onRoot().captureRoboImage("src/jvmTest/resources/screenshots/paywall_sheet_over_host.png")
         assertCapturedFileExists("src/jvmTest/resources/screenshots/paywall_sheet_over_host.png")
         assertTrue(
@@ -235,6 +248,9 @@ class PayCraftSkeletonScreenshotTest {
                 }
             }
         }
+        // Paired assertion (AC-28): the CTA is what makes this a product list rather than a
+        // decorative column, so a render that lost it must fail rather than pin a new golden.
+        onNodeWithTag(PayCraftTestTags.PAYWALL_CTA).assertIsDisplayed()
         onRoot().captureRoboImage("src/jvmTest/resources/screenshots/product_list.png")
         assertCapturedFileExists("src/jvmTest/resources/screenshots/product_list.png")
     }

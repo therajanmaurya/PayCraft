@@ -47,6 +47,15 @@ sealed interface PayCraftPaywallAction {
      * Dispatched after user enters the OTP code sent to their email.
      * On success → billingState = OwnershipVerified → confirmation dialog shown.
      */
+    /**
+     * Gate 2, step 1: ask for the one-time code to be emailed.
+     *
+     * [com.mobilebytelabs.paycraft.core.BillingManager.requestOtpVerification] has existed since
+     * the device-conflict work landed, but no action dispatched to it — so the OTP gate could be
+     * *verified* and never *started*, which is why the whole gate was unreachable from the UI.
+     */
+    data class SendOtpCode(val email: String) : PayCraftPaywallAction
+
     data class VerifyOtpOwnership(val email: String, val otp: String) : PayCraftPaywallAction
 
     /**

@@ -153,7 +153,7 @@ class SinglePaywallPathTest {
     @Test
     fun single_path_ownership_verified_renders_migrated_branch() = renderAndAssert(
         verifiedState,
-        "Your subscription is now active",
+        "Transfer subscription",
     )
 
     /**
@@ -172,7 +172,7 @@ class SinglePaywallPathTest {
             premiumState to "You're Premium",
             BillingState.Error("offline") to "Retry",
             conflictState to "Device limit reached",
-            verifiedState to "Your subscription is now active",
+            verifiedState to "Transfer subscription",
         ).forEach { (state, marker) -> renderAndAssert(state, marker) }
         // Phase 3 Loading branch has no distinctive text marker — the layout-matched
         // PaywallSkeleton is asserted via testTag (AC-5, AC-14). Kept as a separate

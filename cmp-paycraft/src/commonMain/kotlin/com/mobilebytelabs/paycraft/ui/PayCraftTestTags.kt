@@ -103,4 +103,53 @@ object PayCraftTestTags {
 
     /** Tag on the annual-plan savings badge ("Save X%" vs monthly baseline). */
     const val SAVINGS_BADGE = "savings_badge"
+
+    // ── Phase 3b — paywall-state assertion pairs (AC-28) ────────────────────────────────────
+    // Each state's golden is paired with a NAMED assertion on one of these tags. A golden alone
+    // proves a bitmap was written, not that the state rendered the thing that defines it — the
+    // pair is what makes "the device-conflict screen exists" mean "it shows the conflicting
+    // device and a way out".
+
+    /** The account whose subscription is in conflict. */
+    const val DEVICE_CONFLICT_EMAIL = "paycraft_device_conflict_email"
+
+    /** The OTHER device holding the subscription — the fact the old two-line body discarded. */
+    const val DEVICE_CONFLICT_DEVICE_NAME = "paycraft_device_conflict_device_name"
+
+    /** "N of M codes remaining today" — the OTP budget the payload already carried. */
+    const val DEVICE_CONFLICT_OTP_REMAINING = "paycraft_device_conflict_otp_remaining"
+
+    /** Support address, shown when the OTP route is exhausted or unavailable. */
+    const val DEVICE_CONFLICT_SUPPORT_EMAIL = "paycraft_device_conflict_support_email"
+
+    /** Resolution gate 1 — OAuth. */
+    const val DEVICE_CONFLICT_GATE_OAUTH_GOOGLE = "paycraft_device_conflict_gate_oauth_google"
+    const val DEVICE_CONFLICT_GATE_OAUTH_APPLE = "paycraft_device_conflict_gate_oauth_apple"
+
+    /** Resolution gate 2 — emailed one-time code. */
+    const val DEVICE_CONFLICT_GATE_OTP_SEND = "paycraft_device_conflict_gate_otp_send"
+    const val DEVICE_CONFLICT_GATE_OTP_INPUT = "paycraft_device_conflict_gate_otp_input"
+    const val DEVICE_CONFLICT_GATE_OTP_VERIFY = "paycraft_device_conflict_gate_otp_verify"
+
+    /** Resolution gate 3 — manual transfer via support. */
+    const val DEVICE_CONFLICT_GATE_SUPPORT = "paycraft_device_conflict_gate_support"
+
+    /** Ownership-verified confirmation dialog and its two exits. */
+    const val OWNERSHIP_VERIFIED_DIALOG = "paycraft_ownership_verified_dialog"
+    const val OWNERSHIP_VERIFIED_CONFIRM = "paycraft_ownership_verified_confirm"
+    const val OWNERSHIP_VERIFIED_CANCEL = "paycraft_ownership_verified_cancel"
+
+    /** Empty-products surface — replaces a disabled CTA with an explanation and a way forward. */
+    const val EMPTY_PRODUCTS_MESSAGE = "paycraft_empty_products_message"
+    const val EMPTY_PRODUCTS_RETRY = "paycraft_empty_products_retry"
+
+    /** Premium-arm entitlement operations. MANAGE_SUBSCRIPTION_BUTTON already exists — reused. */
+    const val PAYWALL_RESTORE_BUTTON = "paycraft_paywall_restore_button"
+
+    /** Phase 3a resilience surfaces, tagged here so AC-28 can pair all eleven states. */
+    const val CONFIG_FAILED_MESSAGE = "paycraft_config_failed_message"
+    const val CONFIG_FAILED_RETRY = "paycraft_config_failed_retry"
+    const val OFFLINE_MESSAGE = "paycraft_offline_message"
+    const val STALE_MESSAGE = "paycraft_stale_message"
+    const val STALE_REFRESH = "paycraft_stale_refresh"
 }

@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
+import com.mobilebytelabs.paycraft.ui.PayCraftTestTags
 import com.mobilebytelabs.paycraft.model.Product
 
 /**
@@ -61,7 +63,7 @@ fun BuiltInPaywall(
         products.sortedBy { it.displayOrder }.forEach { product ->
             Button(
                 onClick = { onPickProduct(product) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag(PayCraftTestTags.PAYWALL_CTA),
             ) {
                 // Price comes from whatever the SDK last knew. A Trial carries no price at all, so
                 // it shows its name and duration — never a fabricated number, because a wrong price
@@ -75,7 +77,10 @@ fun BuiltInPaywall(
             }
         }
 
-        OutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = onRetry,
+            modifier = Modifier.fillMaxWidth().testTag(PayCraftTestTags.CONFIG_FAILED_RETRY),
+        ) {
             Text("Reload plans")
         }
     }

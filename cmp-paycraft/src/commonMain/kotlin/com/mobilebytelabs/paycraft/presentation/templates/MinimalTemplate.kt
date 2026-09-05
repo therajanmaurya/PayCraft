@@ -1,6 +1,10 @@
 package com.mobilebytelabs.paycraft.presentation.templates
 
 import androidx.compose.foundation.layout.Arrangement
+import com.mobilebytelabs.paycraft.ui.components.PremiumEntitlementActions
+import com.mobilebytelabs.paycraft.ui.components.OwnershipVerifiedContent
+import com.mobilebytelabs.paycraft.ui.components.DeviceConflictContent
+import com.mobilebytelabs.paycraft.ui.PayCraftPaywallAction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -23,17 +27,20 @@ import com.mobilebytelabs.paycraft.ui.theme.PayCraftBrandColorsLight
  * Uses [PayCraftBrandColorsLight] (the PayCraft brand light scheme) as its base palette.
  */
 @Composable
-fun MinimalTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit) {
+fun MinimalTemplate(state: BillingState, products: List<Product>, onPick: (Product) -> Unit, onRetry: () -> Unit, onAction: (PayCraftPaywallAction) -> Unit = {}) {
     val bg = PayCraftBrandColorsLight.background
     Box(Modifier.paywallRoot(bg)) {
         when (state) {
             is BillingState.Loading -> MinimalLoading()
             is BillingState.Free -> MinimalFree(products, onPick)
-            is BillingState.Premium -> MinimalPremium(state)
+            is BillingState.Premium -> Column {
+                MinimalPremium(state)
+                PremiumEntitlementActions(onAction)
+            }
             is BillingState.Error -> MinimalError(state.message, onRetry)
             is BillingState.PaymentPending -> PaymentPendingContent(state.productId)
-            is BillingState.DeviceConflict -> MinimalDeviceConflict(state)
-            is BillingState.OwnershipVerified -> MinimalOwnershipVerified(state)
+            is BillingState.DeviceConflict -> DeviceConflictContent(state, onAction)
+            is BillingState.OwnershipVerified -> OwnershipVerifiedContent(state, onAction)
         }
     }
 }
@@ -80,25 +87,3 @@ private fun MinimalError(msg: String, onRetry: () -> Unit) {
     }
 }
 
-@Composable
-private fun MinimalDeviceConflict(s: BillingState.DeviceConflict) {
-    Column(
-        Modifier.padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("Subscription bound to another device", style = MaterialTheme.typography.titleLarge)
-        Text("Last seen on ${s.conflictingDeviceName ?: "another device"} at ${s.conflictingLastSeen ?: "unknown"}")
-        Text("Email: ${s.email}")
-    }
-}
-
-@Composable
-private fun MinimalOwnershipVerified(s: BillingState.OwnershipVerified) {
-    Column(
-        Modifier.padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("Verified via ${s.verifiedVia.name.lowercase()}", style = MaterialTheme.typography.titleLarge)
-        Text("Transferring subscription to this device…")
-    }
-}

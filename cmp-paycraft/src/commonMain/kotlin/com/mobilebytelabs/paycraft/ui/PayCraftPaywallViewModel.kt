@@ -158,6 +158,7 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
             is PayCraftPaywallAction.OpenRestoreSheet -> _state.update { it.copy(isRestoreSheetVisible = true) }
             is PayCraftPaywallAction.CloseRestoreSheet -> _state.update { it.copy(isRestoreSheetVisible = false) }
             is PayCraftPaywallAction.LoginWithOAuth -> onLoginWithOAuth(action)
+            is PayCraftPaywallAction.SendOtpCode -> onSendOtpCode(action)
             is PayCraftPaywallAction.VerifyOtpOwnership -> onVerifyOtpOwnership(action)
             is PayCraftPaywallAction.ConfirmDeviceTransfer -> onConfirmDeviceTransfer()
             is PayCraftPaywallAction.CancelDeviceTransfer -> onCancelDeviceTransfer()
@@ -365,6 +366,17 @@ class PayCraftPaywallViewModel(private val billingManager: BillingManager) : Vie
     }
 
     /** Gate 2: Verify OTP code entered by user after conflict detected */
+    private fun onSendOtpCode(action: PayCraftPaywallAction.SendOtpCode) {
+        viewModelScope.launch {
+            runCatching { billingManager.requestOtpVerification(action.email) }
+                .onFailure {
+                    // Surfaced rather than swallowed: a silent failure here leaves the user typing
+                    // a code that was never sent.
+                    _state.update { it.copy(errorMessage = "Could not send the code. Please try again.") }
+                }
+        }
+    }
+
     private fun onVerifyOtpOwnership(action: PayCraftPaywallAction.VerifyOtpOwnership) {
         _state.update { it.copy(isRestoring = true) }
         viewModelScope.launch {
