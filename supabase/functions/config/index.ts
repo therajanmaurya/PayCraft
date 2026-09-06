@@ -262,6 +262,47 @@ export async function handleConfigRequest(req: Request): Promise<Response> {
     )
   }
 
+  // The same reasoning applied to the other three reads. Sub-plan 02 fixed products and left these
+  // swallowing their errors, so each still turned a database failure into a plausible-looking 200:
+  //
+  //   paywallRes   — `paywallRes.data ?? {}` degrades to DEFAULT styling and default copy, so an
+  //                  outage renders as "this tenant never customised their paywall".
+  //   providersRes — `providersRes.data ?? []` degrades to ZERO providers, which the SDK renders as
+  //                  a paywall with no way to pay. Indistinguishable from a tenant who has
+  //                  connected none, and the more damaging of the two because it looks like a
+  //                  configuration problem the operator must go fix.
+  //   tenantRes    — `tenantRes.data?.entitlements ?? []` degrades to NO entitlements, which can
+  //                  gate features off for a tenant who is entitled to them.
+  //
+  // Each gets its own error code rather than one shared one: the SDK's resilience chain treats
+  // these differently, and a single "config_query_failed" would tell whoever reads the logs that
+  // something broke without saying which read.
+  if (paywallRes.error) {
+    return new Response(
+      JSON.stringify({ error: "paywall_query_failed", detail: paywallRes.error.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    )
+  }
+  if (providersRes.error) {
+    return new Response(
+      JSON.stringify({ error: "providers_query_failed", detail: providersRes.error.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    )
+  }
+  // `.single()` reports PGRST116 when the row is absent. That is NOT a transport failure — it means
+  // the tenant row is gone even though the api key resolved to its id, which is a real integrity
+  // problem and deserves its own status rather than being folded into a generic 500.
+  if (tenantRes.error) {
+    const missingRow = (tenantRes.error as { code?: string }).code === "PGRST116"
+    return new Response(
+      JSON.stringify({
+        error: missingRow ? "tenant_row_missing" : "tenant_query_failed",
+        detail: tenantRes.error.message,
+      }),
+      { status: missingRow ? 404 : 500, headers: { "Content-Type": "application/json" } },
+    )
+  }
+
   const pricedProducts = await Promise.all(
     (productsRes.data ?? []).map(async (p: Record<string, unknown>) => {
       const trialEnabled = p.trial_enabled === undefined || p.trial_enabled === null
