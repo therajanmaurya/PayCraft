@@ -43,22 +43,6 @@ sealed interface PayCraftPaywallAction {
     data class LoginWithOAuth(val provider: OAuthProvider, val idToken: String) : PayCraftPaywallAction
 
     /**
-     * Gate 2: OTP ownership verification (for custom-domain emails).
-     * Dispatched after user enters the OTP code sent to their email.
-     * On success → billingState = OwnershipVerified → confirmation dialog shown.
-     */
-    /**
-     * Gate 2, step 1: ask for the one-time code to be emailed.
-     *
-     * [com.mobilebytelabs.paycraft.core.BillingManager.requestOtpVerification] has existed since
-     * the device-conflict work landed, but no action dispatched to it — so the OTP gate could be
-     * *verified* and never *started*, which is why the whole gate was unreachable from the UI.
-     */
-    data class SendOtpCode(val email: String) : PayCraftPaywallAction
-
-    data class VerifyOtpOwnership(val email: String, val otp: String) : PayCraftPaywallAction
-
-    /**
      * Final step: user confirmed "Deactivate [device] and transfer here?" dialog.
      * Executes the device transfer. Only valid when billingState = OwnershipVerified.
      */
@@ -71,8 +55,9 @@ sealed interface PayCraftPaywallAction {
     data object CancelDeviceTransfer : PayCraftPaywallAction
 
     /**
-     * Gate 3: OTP exhausted (>300/day). Opens a pre-filled support email.
-     * The email contains: user email, device name, subscription info, timestamp.
+     * Gate 2: opens a pre-filled support email carrying user email, device name,
+     * subscription info and timestamp. Reached by anyone OAuth cannot serve — previously this
+     * was only the fallback after the OTP budget was exhausted.
      */
     data object ContactSupportManualTransfer : PayCraftPaywallAction
 }

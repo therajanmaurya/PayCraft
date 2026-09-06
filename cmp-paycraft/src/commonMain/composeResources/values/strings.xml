@@ -152,20 +152,17 @@
 
     <!-- ═══ Phase 3b — paywall states (AC-25..AC-28) ═══ -->
 
-    <!-- Device conflict (AC-25). The payload carries the conflicting device name, the OTP budget
-         and a support address; the old two-line body discarded all three, which is why this state
-         was a dead end — the user was told to "sign in there" with no way to do it from here. -->
+    <!-- Device conflict (AC-25). The payload carries the conflicting device name and a support
+         address; the old two-line body discarded both, which is why this state was a dead end —
+         the user was told to "sign in there" with no way to do it from here. (It also carried an
+         OTP send budget until the emailed-code gate was removed on 2026-09-06.) -->
     <string name="paycraft_device_conflict_title">Device limit reached</string>
     <string name="paycraft_device_conflict_body">Your subscription is active on %1$s. Verify ownership here to transfer it, or contact support.</string>
     <string name="paycraft_device_conflict_account">Account: %1$s</string>
     <string name="paycraft_device_conflict_gate_oauth_google">Sign in with Google</string>
     <string name="paycraft_device_conflict_gate_oauth_apple">Sign in with Apple</string>
-    <string name="paycraft_device_conflict_gate_otp_send">Email me a code</string>
-    <string name="paycraft_device_conflict_gate_otp_hint">6-digit code</string>
-    <string name="paycraft_device_conflict_gate_otp_verify">Verify code</string>
-    <string name="paycraft_device_conflict_otp_remaining">%1$d of %2$d codes remaining today</string>
     <string name="paycraft_device_conflict_gate_support">Contact %1$s</string>
-    <string name="paycraft_device_conflict_gate_support_exhausted">Daily code limit reached — contact support</string>
+    <string name="paycraft_device_conflict_gate_support_hint">Can’t use Google or Apple sign-in? Contact support to move your subscription.</string>
 
     <!-- Ownership verified (AC-25) — the confirmation before a transfer deactivates the other
          device. Destructive for the other device, so it is an explicit confirm, never implicit. -->

@@ -55,8 +55,6 @@ class BannerPaywallLabelTest {
             pendingToken = "tok",
             conflictingDeviceName = "Other Phone",
             conflictingLastSeen = null,
-            otpAvailable = true,
-            otpDailyLimit = 5,
             supportEmail = "support@example.com",
         )
         assertEquals("Verify ownership to continue", bannerLabelFor(state))

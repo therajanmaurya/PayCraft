@@ -35,12 +35,8 @@ import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_body
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_oauth_apple
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_oauth_google
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_otp_hint
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_otp_send
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_otp_verify
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_support
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_support_exhausted
-import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_otp_remaining
+import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_gate_support_hint
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_device_conflict_title
 
 /**
@@ -69,26 +65,16 @@ fun ProvidePayCraftOAuthHandler(
  * Renders the conflict payload and every route out of it.
  *
  * The previous body was two hardcoded lines — "Device limit reached" and "Sign in there or contact
- * support" — which discarded `conflictingDeviceName`, `otpAvailable`, `otpDailyLimit` and
- * `supportEmail`. Telling someone to sign in on a device you decline to name, with no way to act
+ * support" — which discarded `conflictingDeviceName` and `supportEmail`. Telling someone to sign in on a device you decline to name, with no way to act
  * from here, is the definition of a dead end.
  */
 @Composable
 fun DeviceConflictContent(
     state: BillingState.DeviceConflict,
     onAction: (PayCraftPaywallAction) -> Unit,
-    // NULL means "not known", and that is the honest default. This was `Int = 0`, and no caller
-    // ever passed anything else — so the label rendered "5 of 5 codes remaining today" to a user who
-    // had already spent three of them. A confidently wrong number is worse than no number: it tells
-    // someone they have budget they do not have, and they discover otherwise by being refused.
-    // The count is available server-side; surfacing it needs a state field that does not exist yet,
-    // so until it does the line is omitted rather than fabricated.
-    otpSendsUsedToday: Int? = null,
     modifier: Modifier = Modifier,
 ) {
     val oauthHandler = LocalPayCraftOAuthHandler.current
-    var otp by remember { mutableStateOf("") }
-    var codeRequested by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier.fillMaxWidth().padding(24.dp),
@@ -130,56 +116,17 @@ fun DeviceConflictContent(
             ) { Text(stringResource(Res.string.paycraft_device_conflict_gate_oauth_apple)) }
         }
 
-        // ── Gate 2: emailed one-time code ─────────────────────────────────────────────────
-        if (state.otpAvailable) {
-            if (!codeRequested) {
-                OutlinedButton(
-                    onClick = {
-                        onAction(PayCraftPaywallAction.SendOtpCode(state.email))
-                        codeRequested = true
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                        .testTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_SEND),
-                ) { Text(stringResource(Res.string.paycraft_device_conflict_gate_otp_send)) }
-            } else {
-                OutlinedTextField(
-                    value = otp,
-                    onValueChange = { otp = it.filter(Char::isDigit).take(6) },
-                    label = { Text(stringResource(Res.string.paycraft_device_conflict_gate_otp_hint)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                        .testTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_INPUT),
-                )
-                Button(
-                    onClick = { onAction(PayCraftPaywallAction.VerifyOtpOwnership(state.email, otp)) },
-                    enabled = otp.length == 6,
-                    modifier = Modifier.fillMaxWidth()
-                        .testTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_VERIFY),
-                ) { Text(stringResource(Res.string.paycraft_device_conflict_gate_otp_verify)) }
-            }
+        // The emailed one-time-code gate was REMOVED 2026-09-06. It was the only self-service
+        // route for custom-domain emails that cannot be linked to a Google or Apple account; those
+        // users now go straight to the support route below. The explainer is unconditional because
+        // it is the honest thing to show anyone whose email OAuth cannot serve.
+        Text(
+            text = stringResource(Res.string.paycraft_device_conflict_gate_support_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
-            // Rendered only when the used-count is actually known.
-            if (otpSendsUsedToday != null) {
-                Text(
-                    text = stringResource(
-                        Res.string.paycraft_device_conflict_otp_remaining,
-                        (state.otpDailyLimit - otpSendsUsedToday).coerceAtLeast(0),
-                        state.otpDailyLimit,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag(PayCraftTestTags.DEVICE_CONFLICT_OTP_REMAINING),
-                )
-            }
-        } else {
-            Text(
-                text = stringResource(Res.string.paycraft_device_conflict_gate_support_exhausted),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        // ── Gate 3: manual transfer via support — ALWAYS present ──────────────────────────
+        // ── Gate 2: manual transfer via support — ALWAYS present ──────────────────────────
         // Deliberately not conditional. It is the only route that does not depend on the user
         // still controlling the account's email, which is exactly the case where the other two
         // gates fail and someone is locked out of something they paid for.

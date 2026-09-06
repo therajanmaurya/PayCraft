@@ -13,7 +13,6 @@ import com.mobilebytelabs.paycraft.model.TrialInfo
 import com.mobilebytelabs.paycraft.model.VerificationMethod
 import com.mobilebytelabs.paycraft.model.toSubscriptionStatus
 import com.mobilebytelabs.paycraft.network.EntitlementDto
-import com.mobilebytelabs.paycraft.network.OtpGateResult
 import com.mobilebytelabs.paycraft.network.PayCraftService
 import com.mobilebytelabs.paycraft.persistence.PayCraftStore
 import com.mobilebytelabs.paycraft.platform.DeviceTokenStore
@@ -90,7 +89,7 @@ class PayCraftBillingManager(
     private var lastObservedPremium: Boolean = store.getCachedSubscriptionStatus()?.isPremium ?: false
 
     /**
-     * Cached conflict info so that after OAuth or OTP verifies identity we can
+     * Cached conflict info so that after OAuth verifies identity we can
      * re-hydrate OwnershipVerified without losing conflicting device details.
      * Cleared when conflict is resolved or user logs out.
      */
@@ -579,48 +578,6 @@ class PayCraftBillingManager(
         performRegisterAndLogin(normalized)
     }
 
-    // ─── Gate 2: OTP ──────────────────────────────────────────────────────────
-
-    override suspend fun requestOtpVerification(email: String) {
-        try {
-            service.sendOtp(email)
-        } catch (e: Exception) {
-            PayCraftLogger.onError("requestOtpVerification", e.message)
-        }
-    }
-
-    override suspend fun verifyOtpOwnership(email: String, otp: String): Boolean {
-        val ok = try {
-            service.verifyOtp(email, otp)
-        } catch (e: Exception) {
-            PayCraftLogger.onError("verifyOtpOwnership", e.message)
-            false
-        }
-
-        if (ok) {
-            val conflict = lastConflict
-            val pendingToken = DeviceTokenStore.getToken()
-            if (conflict != null && pendingToken != null) {
-                _billingState.value = BillingState.OwnershipVerified(
-                    email = email.trim().lowercase(),
-                    pendingToken = pendingToken,
-                    conflictingDeviceName = conflict.conflictingDeviceName,
-                    conflictingLastSeen = conflict.conflictingLastSeen,
-                    verifiedVia = VerificationMethod.OTP,
-                    supportEmail = PayCraft.config?.supportEmail ?: "",
-                )
-            }
-        }
-        return ok
-    }
-
-    override suspend fun verifyOtp(email: String, otp: String): Boolean = try {
-        service.verifyOtp(email, otp)
-    } catch (e: Exception) {
-        PayCraftLogger.onError("verifyOtp", e.message)
-        false
-    }
-
     // ─── Confirm transfer (after user confirms the dialog) ───────────────────
 
     override suspend fun confirmDeviceTransfer() {
@@ -843,24 +800,14 @@ class PayCraftBillingManager(
             PayCraftLogger.onFlow("performRegisterAndLogin", "→ No conflict, checking premium...")
             checkPremiumWithDeviceToken(email)
         } else {
-            PayCraftLogger.onFlow("performRegisterAndLogin", "→ CONFLICT detected! Checking OTP gate...")
-            val gate = try {
-                service.checkOtpGate()
-            } catch (e: Exception) {
-                PayCraftLogger.onFlow("performRegisterAndLogin", "OTP gate error: ${e.message}")
-                OtpGateResult(false, 0, 300)
-            }
-            PayCraftLogger.onFlow(
-                "performRegisterAndLogin",
-                "OTP gate: available=${gate.available}, sendsToday=${gate.sendsToday}",
-            )
+            PayCraftLogger.onFlow("performRegisterAndLogin", "→ CONFLICT detected")
+            // No OTP budget probe here any more: the emailed-code gate was removed 2026-09-06, so
+            // there is no per-day send budget to consult before deciding which gates to offer.
             val conflict = BillingState.DeviceConflict(
                 email = email,
                 pendingToken = reg.deviceToken,
                 conflictingDeviceName = reg.conflictingDeviceName,
                 conflictingLastSeen = reg.conflictingLastSeen,
-                otpAvailable = gate.available,
-                otpDailyLimit = gate.limit,
                 supportEmail = PayCraft.config?.supportEmail ?: "",
             )
             lastConflict = conflict

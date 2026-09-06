@@ -1,10 +1,11 @@
 package com.mobilebytelabs.paycraft.billing
 
+import com.mobilebytelabs.paycraft.debug.PayCraftLogLevel
+import com.mobilebytelabs.paycraft.debug.platformLog
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import co.touchlab.kermit.Logger
 import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClient.BillingResponseCode
@@ -147,7 +148,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                         )
                         .build(),
                 )
-                Logger.d(tag = "PlayBillingNativeClient") {
+                logD("PlayBillingNativeClient") {
                     "plan change: replacing $oldProductId with $productId"
                 }
             }
@@ -159,7 +160,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
             val best = selectBestOffer(offers)
                 ?: return NativePurchaseResult.Failed("No subscription offer for $productId")
             detailsParams.setOfferToken(best.offerToken)
-            Logger.d(tag = "PlayBillingNativeClient") {
+            logD("PlayBillingNativeClient") {
                 "offer selected for $productId: id=${best.offerId} trialDays=${best.freeTrialDays}"
             }
         }
@@ -228,7 +229,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                 .build(),
         )
         if (ack.responseCode != BillingResponseCode.OK) {
-            Logger.w(tag = "PlayBillingNativeClient") {
+            logW("PlayBillingNativeClient") {
                 "acknowledgePurchase failed (${ack.responseCode}): ${ack.debugMessage} — " +
                     "will retry on the next reconcile (Play auto-refunds after 72h)"
             }
@@ -411,7 +412,7 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
                 delay(CONNECT_BACKOFF_BASE_MS shl (attempt - 1))
             }
         }
-        Logger.w(tag = "PlayBillingNativeClient") {
+        logW("PlayBillingNativeClient") {
             "Play billing connect failed after $attempt attempts: ${last.debugMessage}"
         }
         last
@@ -487,3 +488,21 @@ class PlayBillingNativeClient(context: Context, private val activityProvider: ()
         }
     }
 }
+
+// ── Logging shim ─────────────────────────────────────────────────────────────
+// Kermit was removed from PayCraft: it was a published transitive dependency doing nothing this
+// SDK does not already do itself, and its version skewed against consumers (PayCraft 2.1.0 vs
+// reels-downloader 2.0.8 crashed at launch on Logger$Companion.d$default; holding at the
+// consumer's 2.0.5 broke this file with overload ambiguity). A dependency the SDK does not need
+// cannot skew, so it is gone rather than pinned.
+//
+// These keep Kermit's exact call SHAPE — `logD(TAG) { "..." }` — so every existing trailing lambda
+// is untouched and the message is still built lazily, only when logging is on.
+private inline fun logD(tag: String, message: () -> String) =
+    platformLog(PayCraftLogLevel.DEBUG, tag, message())
+
+private inline fun logW(tag: String, message: () -> String) =
+    platformLog(PayCraftLogLevel.WARN, tag, message())
+
+private inline fun logE(tag: String, message: () -> String) =
+    platformLog(PayCraftLogLevel.ERROR, tag, message())

@@ -28,6 +28,7 @@ import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_reload
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_title
 import com.mobilebytelabs.paycraft.generated.resources.paycraft_builtin_trial_label
 import com.mobilebytelabs.paycraft.model.Product
+import com.mobilebytelabs.paycraft.model.sessionDisplayPriceFormatted
 
 /**
  * Rendered when network, persisted cache and bundled fallback have all failed, but the SDK can
@@ -77,11 +78,11 @@ fun BuiltInPaywall(
                 val label = when (product) {
                     is Product.Subscription -> stringResource(
                         Res.string.paycraft_builtin_priced_label,
-                        product.displayName, product.basePrice.format(),
+                        product.displayName, product.sessionDisplayPriceFormatted().orEmpty(),
                     )
                     is Product.Lifetime -> stringResource(
                         Res.string.paycraft_builtin_priced_label,
-                        product.displayName, product.basePrice.format(),
+                        product.displayName, product.sessionDisplayPriceFormatted().orEmpty(),
                     )
                     // The English "-day trial" suffix was concatenated onto a number; it is now a
                     // whole parameterised phrase so a translator can order the units naturally.

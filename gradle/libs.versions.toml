@@ -37,10 +37,15 @@ androidx-activityCompose = "1.12.2"
 #
 # ktor 3.5.2 + kotlinxSerialization 1.11.0 are aligned to what supabase 3.8.0 itself depends on
 # (3.5.1 / 1.11.0) so the resolved graph has no silent up/down-grades.
-supabase = "3.8.0"
+# HELD at 3.1.4 — the version published 2.3.1 ships and every consumer resolves against today.
+# Moving to 3.8.0 inverted Gradle's resolution: PayCraft's version became HIGHER than the consumers'
+# pins, so transitively-shared Supabase modules jumped forward while each consumer's directly-pinned
+# artifacts stayed behind. Verified on device: three successive launch crashes, the last of which
+# (SelectRequestBuilder.<init>) is an API break requiring a source migration in the consumer, not a
+# version bump. Raising this again needs all three consumers migrated in the same release train.
+supabase = "3.1.4"
 ktor = "3.5.2"
 koin = "4.2.2"
-kermit = "2.1.0"
 kotlinxSerialization = "1.11.0"
 # Pinned EXPLICITLY (as kmp-toolkit does) so the Instant-typealias klib clash can never silently
 # reappear via a transitive downgrade. See the supabase note above.
@@ -51,7 +56,18 @@ lifecycle = "2.9.6"
 # Store5 read-through cache (offline-correct entitlement gating — D8). SQLDelight is the
 # SourceOfTruth schema-of-record (cmp-paycraft/.../db/Entitlement.sq); its driver + code-gen
 # are wired with the native clients in Phase 3 (see build.gradle.kts note).
-store5 = "5.1.0-alpha11"
+# HELD at alpha10 (was alpha11) — same reason as the supabase hold above, and proven on device.
+# alpha11 bumped its kermit requirement 2.0.5 -> 2.1.0. PayCraft itself no longer uses kermit at all
+# (removed this session in favour of PlatformLog), but it still depends on Store5, so alpha11 made
+# PayCraft the ONLY requester of kermit 2.1.0 in a consumer's graph — every other requester asks for
+# 2.0.x — and Gradle's highest-wins then forced 2.1.0 on consumers compiled against 2.0.8. That is
+# DR-4 crash #2: reels-downloader died at launch in its OWN AppOpenAdManager with
+# NoSuchMethodError Logger$Companion.d$default. Removing PayCraft's DIRECT kermit dependency did not
+# fix it; the transitive Store5 path is what mattered. alpha10 requires kermit 2.0.5, so consumers
+# resolve to their own pin and nothing is forced upward.
+# Do NOT raise to alpha11+ without first checking its kermit requirement against every consumer pin
+# (reels 2.0.8; steady + cappy 2.1.0 and therefore unaffected either way).
+store5 = "5.1.0-alpha10"
 sqldelight = "2.3.2"
 # Google Play Billing Library v9 — native Android IAP client (Phase 3, D8/D13). billing-ktx
 # bundles the suspend query extensions used by PlayBillingNativeClient.
@@ -115,7 +131,6 @@ lifecycle-viewmodel-savedstate = { module = "org.jetbrains.androidx.lifecycle:li
 lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 
 # Logging
-kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 
 # Settings (email persistence + offline entitlement SoT)
 multiplatform-settings = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatformSettings" }

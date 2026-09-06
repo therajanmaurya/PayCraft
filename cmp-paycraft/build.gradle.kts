@@ -131,7 +131,6 @@ kotlin {
             implementation(libs.lifecycle.runtime.compose)
 
             // Logging
-            implementation(libs.kermit)
 
             // Serialization
             implementation(libs.kotlinx.serialization.json)

@@ -47,13 +47,11 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class PaywallStateMatrixTest {
 
-    private fun conflict(otpAvailable: Boolean = true) = BillingState.DeviceConflict(
+    private fun conflict() = BillingState.DeviceConflict(
         email = "buyer@example.com",
         pendingToken = "tok",
         conflictingDeviceName = "Pixel 8 Pro",
         conflictingLastSeen = "2026-09-01",
-        otpAvailable = otpAvailable,
-        otpDailyLimit = 5,
         supportEmail = "support@example.com",
     )
 
@@ -67,16 +65,14 @@ class PaywallStateMatrixTest {
                 ProvidePayCraftOAuthHandler(handler = { _: OAuthProvider -> }) {
                     // A real used-count is supplied here, which is the only case where the
                     // remaining-codes line should appear at all.
-                    DeviceConflictContent(state = conflict(), onAction = {}, otpSendsUsedToday = 2)
+                    DeviceConflictContent(state = conflict(), onAction = {})
                 }
             }
         }
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_DEVICE_NAME).assertIsDisplayed()
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_EMAIL).assertIsDisplayed()
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OAUTH_GOOGLE).assertIsDisplayed()
-        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_SEND).assertIsDisplayed()
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_SUPPORT).assertIsDisplayed()
-        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_OTP_REMAINING).assertIsDisplayed()
         onRoot().captureRoboImage(P_DEVICE_CONFLICT)
         assertCaptured(P_DEVICE_CONFLICT)
     }
@@ -92,22 +88,12 @@ class PaywallStateMatrixTest {
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_SUPPORT).assertIsDisplayed()
     }
 
+    /** Support remains reachable for anyone OAuth cannot serve — the only gate that always is. */
     @Test
-    fun otp_remaining_line_is_absent_when_the_used_count_is_unknown() = runComposeUiTest {
-        // Regression for a permanently-wrong label: the parameter defaulted to 0 and nothing ever
-        // passed a real value, so every user was told they had their full daily budget left.
-        setContent { DeterministicTheme { DeviceConflictContent(state = conflict(), onAction = {}) } }
-        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_OTP_REMAINING).assertDoesNotExist()
-        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_SEND).assertIsDisplayed()
-    }
-
-    /** Support remains reachable once the OTP budget is exhausted — the only gate that always is. */
-    @Test
-    fun device_conflict_otp_exhausted_keeps_support_reachable() = runComposeUiTest {
+    fun device_conflict_keeps_support_reachable() = runComposeUiTest {
         setContent {
-            DeterministicTheme { DeviceConflictContent(state = conflict(otpAvailable = false), onAction = {}) }
+            DeterministicTheme { DeviceConflictContent(state = conflict(), onAction = {}) }
         }
-        onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_OTP_SEND).assertDoesNotExist()
         onNodeWithTag(PayCraftTestTags.DEVICE_CONFLICT_GATE_SUPPORT).assertIsDisplayed()
     }
 
@@ -122,7 +108,7 @@ class PaywallStateMatrixTest {
                         pendingToken = "tok",
                         conflictingDeviceName = "Pixel 8 Pro",
                         conflictingLastSeen = "2026-09-01",
-                        verifiedVia = VerificationMethod.OTP,
+                        verifiedVia = VerificationMethod.OAUTH,
                         supportEmail = "support@example.com",
                     ),
                     onAction = {},

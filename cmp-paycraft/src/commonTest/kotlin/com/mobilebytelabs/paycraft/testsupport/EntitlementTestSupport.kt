@@ -7,7 +7,6 @@ import com.mobilebytelabs.paycraft.billing.NativePurchaseResult
 import com.mobilebytelabs.paycraft.model.Entitlement
 import com.mobilebytelabs.paycraft.model.OAuthProvider
 import com.mobilebytelabs.paycraft.network.EntitlementDto
-import com.mobilebytelabs.paycraft.network.OtpGateResult
 import com.mobilebytelabs.paycraft.network.PayCraftService
 import com.mobilebytelabs.paycraft.network.PremiumCheckResult
 import com.mobilebytelabs.paycraft.network.RegisterDeviceResult
@@ -74,9 +73,6 @@ class FakePayCraftService(
         PremiumCheckResult(isPremium = false, tokenValid = true)
     override suspend fun transferToDevice(serverToken: String, newDeviceToken: String): Boolean = true
     override suspend fun revokeDevice(serverToken: String, targetToken: String): Boolean = true
-    override suspend fun checkOtpGate(): OtpGateResult = OtpGateResult(available = false, sendsToday = 0, limit = 300)
-    override suspend fun sendOtp(email: String) = Unit
-    override suspend fun verifyOtp(email: String, token: String): Boolean = false
     override suspend fun verifyOAuthToken(provider: OAuthProvider, idToken: String): String? = null
 }
 

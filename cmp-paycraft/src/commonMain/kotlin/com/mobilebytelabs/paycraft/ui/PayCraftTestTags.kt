@@ -116,10 +116,8 @@ object PayCraftTestTags {
     /** The OTHER device holding the subscription — the fact the old two-line body discarded. */
     const val DEVICE_CONFLICT_DEVICE_NAME = "paycraft_device_conflict_device_name"
 
-    /** "N of M codes remaining today" — the OTP budget the payload already carried. */
-    const val DEVICE_CONFLICT_OTP_REMAINING = "paycraft_device_conflict_otp_remaining"
 
-    /** Support address, shown when the OTP route is exhausted or unavailable. */
+    /** Support address — the Gate 2 fallback for anyone OAuth cannot serve. */
     const val DEVICE_CONFLICT_SUPPORT_EMAIL = "paycraft_device_conflict_support_email"
 
     /** Resolution gate 1 — OAuth. */
@@ -127,9 +125,6 @@ object PayCraftTestTags {
     const val DEVICE_CONFLICT_GATE_OAUTH_APPLE = "paycraft_device_conflict_gate_oauth_apple"
 
     /** Resolution gate 2 — emailed one-time code. */
-    const val DEVICE_CONFLICT_GATE_OTP_SEND = "paycraft_device_conflict_gate_otp_send"
-    const val DEVICE_CONFLICT_GATE_OTP_INPUT = "paycraft_device_conflict_gate_otp_input"
-    const val DEVICE_CONFLICT_GATE_OTP_VERIFY = "paycraft_device_conflict_gate_otp_verify"
 
     /** Resolution gate 3 — manual transfer via support. */
     const val DEVICE_CONFLICT_GATE_SUPPORT = "paycraft_device_conflict_gate_support"

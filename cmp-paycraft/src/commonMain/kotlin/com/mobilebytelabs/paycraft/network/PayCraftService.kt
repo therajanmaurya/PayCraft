@@ -6,12 +6,10 @@ import com.mobilebytelabs.paycraft.model.Entitlement
 import com.mobilebytelabs.paycraft.model.OAuthProvider
 import com.mobilebytelabs.paycraft.model.SubscriptionState
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Apple
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.IDToken
-import io.github.jan.supabase.auth.providers.builtin.OTP
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import io.ktor.client.HttpClient
@@ -101,8 +99,6 @@ data class RegisterDeviceResult(
 
 data class PremiumCheckResult(val isPremium: Boolean, val tokenValid: Boolean)
 
-data class OtpGateResult(val available: Boolean, val sendsToday: Int, val limit: Int)
-
 // ─── Interface ────────────────────────────────────────────────────────────────
 
 interface PayCraftService {
@@ -136,12 +132,6 @@ interface PayCraftService {
     suspend fun checkPremiumWithDevice(serverToken: String): PremiumCheckResult
     suspend fun transferToDevice(serverToken: String, newDeviceToken: String): Boolean
     suspend fun revokeDevice(serverToken: String, targetToken: String): Boolean
-
-    suspend fun checkOtpGate(): OtpGateResult
-
-    // OTP ownership verification
-    suspend fun sendOtp(email: String)
-    suspend fun verifyOtp(email: String, token: String): Boolean
 
     /**
      * Verifies a Google or Apple ID token via Supabase Auth (Gate 1).
@@ -376,32 +366,6 @@ class PayCraftServiceImpl(private val client: SupabaseClient, private val apiKey
             },
         ).decodeAs<JsonObject>()
         return r["revoked"]?.jsonPrimitive?.boolean ?: false
-    }
-
-    override suspend fun checkOtpGate(): OtpGateResult {
-        PayCraftLogger.onRpcCall("check_otp_gate", "")
-        val r = postgrest.rpc("check_otp_gate").decodeAs<JsonObject>()
-        return OtpGateResult(
-            available = r["available"]?.jsonPrimitive?.boolean ?: false,
-            sendsToday = r["sends_today"]?.jsonPrimitive?.int ?: 0,
-            limit = r["limit"]?.jsonPrimitive?.int ?: 300,
-        )
-    }
-
-    override suspend fun sendOtp(email: String) {
-        auth.signInWith(OTP) { this.email = email }
-    }
-
-    override suspend fun verifyOtp(email: String, token: String): Boolean = try {
-        auth.verifyEmailOtp(
-            type = OtpType.Email.EMAIL,
-            email = email,
-            token = token,
-        )
-        true
-    } catch (e: Exception) {
-        PayCraftLogger.onRpcError("verifyOtp", e.message)
-        false
     }
 
     override suspend fun verifyOAuthToken(provider: OAuthProvider, idToken: String): String? = try {

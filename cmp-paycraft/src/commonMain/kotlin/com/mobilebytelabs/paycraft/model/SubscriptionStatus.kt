@@ -3,8 +3,11 @@ package com.mobilebytelabs.paycraft.model
 /** Supported OAuth identity providers for ownership verification (Gate 1). */
 enum class OAuthProvider { GOOGLE, APPLE }
 
-/** How ownership was verified before a device transfer is confirmed. */
-enum class VerificationMethod { OAUTH, OTP }
+/**
+ * How ownership was verified before a device transfer is confirmed.
+ * The OTP arm was removed 2026-09-06 — OAuth is the only self-service proof.
+ */
+enum class VerificationMethod { OAUTH }
 
 data class SubscriptionStatus(
     val isPremium: Boolean = false,
@@ -50,27 +53,27 @@ sealed interface BillingState {
      *
      * Resolution priority:
      *  1. OAuth (Gate 1) — Google / Apple sign-in proves email ownership instantly.
-     *     Used when the user's email can be linked to a Google or Apple account.
-     *  2. OTP (Gate 2) — 6-digit code sent via Brevo. Used for custom-domain emails.
-     *     Limited to [otpDailyLimit] per day; [otpAvailable] = false when exhausted.
-     *  3. Manual (Gate 3) — [otpAvailable] = false. UI shows pre-filled "Contact Support"
-     *     email button with all device + subscription info.
+     *  2. Manual (Gate 2) — pre-filled "Contact Support" email carrying the device +
+     *     subscription details, for anyone Gate 1 cannot serve.
      *
-     * After Gate 1 or Gate 2 succeeds, [BillingState.OwnershipVerified] is emitted.
+     * A third gate (emailed one-time code, via Brevo, capped at 300 sends/day platform-wide)
+     * existed until 2026-09-06 and was REMOVED — OAuth is the supported self-service path.
+     * The trade-off is deliberate and worth remembering: OTP was the only self-service route for
+     * custom-domain emails that cannot be linked to a Google or Apple account, so those users now
+     * reach Gate 2 directly instead of resolving a device conflict themselves.
+     *
+     * After Gate 1 succeeds, [BillingState.OwnershipVerified] is emitted.
      */
     data class DeviceConflict(
         val email: String,
         val pendingToken: String,
         val conflictingDeviceName: String?,
         val conflictingLastSeen: String?,
-        /** False when daily OTP send limit is reached → show Manual gate. */
-        val otpAvailable: Boolean,
-        val otpDailyLimit: Int,
         val supportEmail: String,
     ) : BillingState
 
     /**
-     * Ownership has been verified (via OAuth or OTP).
+     * Ownership has been verified via OAuth.
      * The UI MUST show a confirmation dialog before calling
      * [BillingManager.confirmDeviceTransfer] — the user must explicitly consent
      * to deactivating the existing device.

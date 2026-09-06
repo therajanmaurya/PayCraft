@@ -71,8 +71,6 @@ class SinglePaywallPathTest {
         pendingToken = "tok",
         conflictingDeviceName = "iPhone 14",
         conflictingLastSeen = "2026-06-01",
-        otpAvailable = true,
-        otpDailyLimit = 5,
         supportEmail = "support@example.com",
     )
 

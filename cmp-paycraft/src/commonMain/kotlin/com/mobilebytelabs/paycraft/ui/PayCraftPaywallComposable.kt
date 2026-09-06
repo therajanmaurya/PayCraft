@@ -57,6 +57,7 @@ import com.mobilebytelabs.paycraft.ui.components.skeleton.PaywallSkeleton
 import com.mobilebytelabs.paycraft.ui.theme.PayCraftThemeProvider
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import com.mobilebytelabs.paycraft.model.sessionDisplayPriceFormatted
 
 /**
  * v2 cloud-driven paywall surface — the **single paywall path** for the PayCraft SDK
@@ -410,8 +411,8 @@ private fun Product.toBillingPlan(config: SuiteConfig?): BillingPlan {
     val priced = dtoMatch?.resolvedPrice
     val priceLabel = when {
         priced != null -> Money(priced.amountCents, priced.currency).format()
-        this is Product.Subscription -> basePrice.format()
-        this is Product.Lifetime -> basePrice.format()
+        this is Product.Subscription -> sessionDisplayPriceFormatted().orEmpty()
+        this is Product.Lifetime -> sessionDisplayPriceFormatted().orEmpty()
         this is Product.Trial -> "Free"
         else -> ""
     }
