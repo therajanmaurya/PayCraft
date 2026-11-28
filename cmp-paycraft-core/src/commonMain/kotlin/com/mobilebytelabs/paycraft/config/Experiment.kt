@@ -1,14 +1,10 @@
 package com.mobilebytelabs.paycraft.config
 
-import com.mobilebytelabs.paycraft.winback.ExitSurveyConfig
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
@@ -20,16 +16,14 @@ data class ExperimentDto(val key: String = "", val variants: List<ExperimentVari
 
 /**
  * [defaultSku]: the plan this variant's paywall opens on (migration 221); null = the paywall's own default.
- * [exitOffer] (227): `false` = no exit offer for this arm, an object = this arm's discount, absent = the tenant's.
- * [paywallTemplate] (227): this arm's design; null = the paywall's own.
+ * What else an arm changes (design, win-back discount — migration 227) the SERVER resolves into this device's
+ * `/config` (`_shared/experiment-arm.ts`), so new kinds of test need no app release.
  */
 data class ExperimentVariantDto(
     val key: String = "",
     val weight: Int = 0,
     val offeringId: String = "",
     val defaultSku: String? = null,
-    val exitOffer: JsonElement? = null,
-    val paywallTemplate: String? = null,
 )
 
 /** The wire form `/config` serves: `{ key, variants: [{ key, weight, offering_id, default_sku? }] }`. */
@@ -45,8 +39,6 @@ fun ExperimentDto.toJson(): JsonObject = buildJsonObject {
                         put("weight", v.weight)
                         put("offering_id", v.offeringId)
                         v.defaultSku?.let { put("default_sku", it) }
-                        v.paywallTemplate?.let { put("paywall_template", it) }
-                        v.exitOffer?.let { put("exit_offer", it) }
                     },
                 )
             }
@@ -64,8 +56,6 @@ fun SuiteConfig.experimentOrNull(): ExperimentDto? {
             (it["weight"] as? JsonPrimitive)?.intOrNull ?: 0,
             it.str("offering_id"),
             it.str("default_sku").ifBlank { null },
-            it["exit_offer"]?.takeIf { e -> e is JsonObject || (e as? JsonPrimitive)?.booleanOrNull == false },
-            it.str("paywall_template").ifBlank { null },
         )
     }
     return ExperimentDto(o.str("key"), variants).takeIf { it.key.isNotBlank() }
@@ -75,28 +65,7 @@ fun SuiteConfig.experimentOrNull(): ExperimentDto? {
  * Which variant of which experiment this device is in — tagged onto every paywall event. [defaultSku]: the plan the
  * paywall pre-selects for this variant, already checked to be one the variant sells; null = the paywall's default.
  */
-data class ExperimentAssignment(
-    val experiment: String,
-    val variant: String,
-    val defaultSku: String? = null,
-    /** The variant's exit-offer choice (227): `false` off, an object its discount, null the tenant's. */
-    val exitOffer: JsonElement? = null,
-)
-
-/** The exit survey as the device's variant sees it: the exit offer turned off or replaced; else unchanged. */
-fun ExitSurveyConfig?.forVariant(a: ExperimentAssignment?): ExitSurveyConfig? {
-    val cfg = this ?: return null
-    val choice = a?.exitOffer ?: return cfg
-    val offer = (choice as? JsonObject)?.let {
-        val pct = (it["percent_off"] as? JsonPrimitive)?.intOrNull ?: return@let null
-        ExitSurveyConfig.Offer(
-            percentOff = pct,
-            duration = (it["duration"] as? JsonPrimitive)?.contentOrNull ?: "once",
-            durationInMonths = (it["duration_in_months"] as? JsonPrimitive)?.intOrNull,
-        )
-    }
-    return ExitSurveyConfig(cfg.enabled || offer != null, cfg.title, cfg.reasons, cfg.capDays, offer)
-}
+data class ExperimentAssignment(val experiment: String, val variant: String, val defaultSku: String? = null)
 
 /**
  * The device's variant: FNV-1a of `key:unitId` into the weights. Deterministic, so a device keeps its variant
@@ -136,9 +105,7 @@ internal fun SuiteConfig.withExperimentAssigned(unitId: String): Pair<SuiteConfi
     val applied = copy(
         offerings = offerings.map { it.copy(isCurrent = it.id == chosen.id) },
         products = products.filterNot { it.sku in others },
-        // A design arm (227) renders its template's seed: the published tree would otherwise win over it.
-        paywall = arm.paywallTemplate?.let { paywall.copy(template = it, workflow = null) } ?: paywall,
     )
     // An unknown default sku is dropped here, so the paywall falls back to its own default.
-    return applied to ExperimentAssignment(exp.key, arm.key, arm.defaultSku?.takeIf { it in kept }, arm.exitOffer)
+    return applied to ExperimentAssignment(exp.key, arm.key, arm.defaultSku?.takeIf { it in kept })
 }

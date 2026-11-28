@@ -27,8 +27,8 @@ import {
   pickOfferPlan,
   productLookupColumn,
   type OfferCoupon,
-  type VariantExitOffer,
 } from "../_shared/winback-offer.ts"
+import { armCoupon, assignArm, type ArmRow } from "../_shared/experiment-arm.ts"
 import { signPromotionalOffer } from "../_shared/appstore-offer.ts"
 
 const CODE = /^[a-z][a-z_]{0,30}$/
@@ -72,8 +72,9 @@ serve(async (req: Request): Promise<Response> => {
   const reasons = (survey?.reasons ?? []) as Array<{ code: string; enabled?: boolean; action?: string; message?: string; coupon_id?: string; free_text?: boolean }>
   // "exit_offer": the discount shown first on close (migration 226) — not a survey answer, nothing is recorded.
   const isExitOffer = reasonCode === EXIT_OFFER
-  // An A/B variant (227) may turn the exit offer off or give it its own coupon.
-  const arm = isExitOffer ? await runningVariant(supabase, tenantId, str(body.experiment, 48), str(body.variant, 32)) : null
+  // The buyer's A/B arm (227) decides their win-back discount — off, or its own coupon — for the exit offer and every
+  // survey answer alike. Resolved here from the device, so it works on apps that never heard of the arm.
+  const arm = await buyerArm(supabase, tenantId, str(body.deviceRef, 100))
   const exitCoupon = exitOfferCoupon(survey, arm)
   const reason = isExitOffer
     ? (exitCoupon ? { code: EXIT_OFFER, action: "offer", coupon_id: exitCoupon } : undefined)
@@ -108,11 +109,12 @@ serve(async (req: Request): Promise<Response> => {
   })
 
   if (reason.action === "message" && reason.message) return json(200, { action: "message", message: reason.message })
-  if (reason.action !== "offer" || !reason.coupon_id || !userRef) return json(200, { action: "none" })
+  const couponId = isExitOffer ? reason.coupon_id : armCoupon(reason.coupon_id, arm)
+  if (reason.action !== "offer" || !couponId || !userRef) return json(200, { action: "none" })
 
   const { data: coupon } = await supabase.from("tenant_coupons")
     .select("id,percent_off,duration,duration_in_months,active,redeem_by,max_redemptions,times_redeemed,stripe_coupon_id,stripe_promotion_code_id,razorpay_offer_id,googleplay_offer_ids,appstore_offer_ids")
-    .eq("tenant_id", tenantId).eq("id", reason.coupon_id).maybeSingle()
+    .eq("tenant_id", tenantId).eq("id", couponId).maybeSingle()
   if (!coupon || !redeemableNow(coupon as OfferCoupon)) return json(200, { action: "none" })
 
   // The buyer's Play plan can't carry this discount (e.g. "3 months" on an annual plan). An app that follows the
@@ -180,17 +182,15 @@ async function signedAppStoreOffer(
   }
 }
 
-/** The device's arm of the RUNNING experiment [key], or null (no experiment, another one, unknown arm). */
-async function runningVariant(
+/** The device's arm of the tenant's running experiment (the SDK's own assignment), or null. */
+async function buyerArm(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   tenantId: string,
-  key: string | null,
-  variant: string | null,
-): Promise<VariantExitOffer | null> {
-  if (!key || !variant) return null
-  const { data } = await supabase.from("paywall_experiments").select("variants")
-    .eq("tenant_id", tenantId).eq("key", key).eq("status", "running").maybeSingle()
-  const arms = (data?.variants ?? []) as Array<VariantExitOffer & { key?: string }>
-  return arms.find((a) => a?.key === variant) ?? null
+  deviceRef: string | null,
+): Promise<ArmRow | null> {
+  if (!deviceRef) return null
+  const { data } = await supabase.from("paywall_experiments").select("key,variants")
+    .eq("tenant_id", tenantId).eq("status", "running").maybeSingle()
+  return data?.key ? assignArm(data.key, (data.variants ?? []) as ArmRow[], deviceRef) : null
 }

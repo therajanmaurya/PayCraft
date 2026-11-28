@@ -58,6 +58,9 @@ class ConfigClient(
         return try {
             val response: HttpResponse = http.get(backend.configUrl) {
                 parameter("apiKey", apiKey)
+                // Release-less A/B tests: the server resolves this device's arm into the config it returns (design,
+                // win-back discount) — the same arm the SDK picks for its event tags (`assign`).
+                parameter("deviceId", PayCraft.deviceId)
                 header("Accept-Language", "en-$localeCountry")
                 // REQUIRED: `/config` resolves each product's store binding from
                 // `tenant_routing_rules` for THIS platform — which provider the dashboard's

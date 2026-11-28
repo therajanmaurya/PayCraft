@@ -242,6 +242,11 @@ export function ExperimentsEditor({
         <Card>
           <CardHeader title={isNew ? "New experiment" : `Edit ${draft.key}`} subtitle="2–4 variants. The first is the control; weights split devices proportionally." />
           <CardBody className="grid gap-4">
+            <p className="rounded-md bg-ink-50 px-3 py-2 text-xs text-ink-600 dark:bg-ink-800 dark:text-ink-300" data-testid="experiment-reach">
+              No app release needed — PayCraft resolves each device&apos;s variant on the server. Offering, pre-selected plan and the
+              win-back discount reach every app already installed; the design and the exit offer shown on close reach apps on
+              PayCraft SDK 3.0.17 or newer (older apps in those variants keep their current paywall).
+            </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-1.5 text-sm">
                 <span className="font-medium text-ink-700 dark:text-ink-200">Key</span>

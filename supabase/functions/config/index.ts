@@ -9,6 +9,7 @@
 //     tenant_id, plan, products[], providers[], paywall, locale, cache_ttl_seconds
 //   }
 
+import { applyArm, assignArm, type ArmRow } from "../_shared/experiment-arm.ts"
 import { geoCountry as resolveGeoCountry } from "../_shared/geo.ts"
 import { buildExitSurvey, type CouponRow, type ExitSurveyWire, type SurveyRow } from "../_shared/exit-survey.ts"
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts"
@@ -736,6 +737,7 @@ async function handleConfigRequestInner(req: Request): Promise<Response> {
       PAYCRAFT_TERMS_URL,
   }
 
+  const experiment = await loadExperiment(supabase, tenantId) as { key?: string; variants?: ArmRow[] } | null
   const body = {
     tenant_id: tenantId,
     plan: tenantRes.data?.plan,
@@ -786,7 +788,7 @@ async function handleConfigRequestInner(req: Request): Promise<Response> {
     // The running A/B experiment (migration 206) or null: `{ key, variants: [{ key, weight, offering_id }] }`.
     // The SDK assigns the device a variant by hashing its device ref, and shows that variant's offering. A failed
     // read degrades to null — no experiment is a normal paywall, never a broken one.
-    experiment: await loadExperiment(supabase, tenantId),
+    experiment,
     // The resume nudge (migration 210, paycraft-attempt-observability D10 / D12): ONE local notification after
     // a checkout abandon / payment failure, scheduled by the SDK only when notification permission is already
     // granted. Delay and copy are the tenant's — null title/body = the SDK's default strings. The `??`
@@ -799,7 +801,13 @@ async function handleConfigRequestInner(req: Request): Promise<Response> {
     },
   }
 
-  return new Response(JSON.stringify(body), {
+  // Release-less A/B tests: an app that names its device gets the config its arm sees (design, win-back discount),
+  // resolved here — the same arm the SDK picks for its event tags. Without a device id: the tenant's config.
+  const deviceId = url.searchParams.get("deviceId")?.slice(0, 100)
+  const arm = deviceId && experiment?.key ? assignArm(experiment.key, experiment.variants ?? [], deviceId) : null
+  const served = applyArm(body, arm)
+
+  return new Response(JSON.stringify(served), {
     headers: {
       "content-type": "application/json",
       "cache-control": "private, max-age=3600",

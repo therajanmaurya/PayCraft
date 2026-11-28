@@ -82,7 +82,7 @@ export function pickOfferPlan<T extends { interval?: string | null }>(plans: T[]
 }
 
 /** What an A/B variant (migration 227) says about the exit offer: off, or its own coupon. */
-export type VariantExitOffer = { exit_offer?: boolean | null; exit_offer_coupon_id?: string | null }
+export type VariantExitOffer = { exit_offer?: unknown; exit_offer_coupon_id?: string | null }
 
 /**
  * The coupon of the exit offer this buyer gets: none when the tenant turned it off or the buyer's variant did; the

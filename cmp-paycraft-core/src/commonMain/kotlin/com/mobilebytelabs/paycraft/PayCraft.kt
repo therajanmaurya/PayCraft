@@ -421,14 +421,9 @@ object PayCraft {
                 sku,
                 freeText,
             )
-            // This app follows the plan the server moves an offer to (the offer's `sku`): an annual buyer can be offered
-            // a monthly-only discount. Older apps don't send it and get no offer their plan can't carry.
+            // This app follows the plan the server moves an offer to (the offer's `sku`): an annual buyer can be
+            // offered a monthly-only discount. Older apps don't send it and get no offer their plan can't carry.
             body = JsonObject(body + ("planSwitch" to JsonPrimitive(true)))
-            // The A/B arm, so the server applies its exit offer (227). App-only: the web SDK runs no experiments.
-            activeExperiment?.let {
-                val arm = mapOf("experiment" to JsonPrimitive(it.experiment), "variant" to JsonPrimitive(it.variant))
-                body = JsonObject(body + arm)
-            }
             if (platform == "ios") {
                 val appUserId = billingManager?.userEmail?.value?.trim()?.lowercase()?.ifBlank { null } ?: deviceId
                 body = JsonObject(body + ("appAccountToken" to JsonPrimitive(storeAppAccountToken(appUserId))))
