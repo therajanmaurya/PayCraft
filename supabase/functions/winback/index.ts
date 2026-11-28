@@ -93,9 +93,9 @@ serve(async (req: Request): Promise<Response> => {
   const mode = (req.headers.get("x-paycraft-mode") ?? str(body.mode, 4) ?? "").toLowerCase() === "test" ? "test" : "live"
   const sentSku = str(body.sku, 100)
   // Shipped SDKs send the plan's product id here; resolve either form, and record the real SKU.
-  let product: { id: string; sku: string; app_store_product_id: string | null } | null = null
+  let product: { id: string; sku: string; app_store_product_id: string | null; play_product_id?: string | null } | null = null
   if (sentSku) {
-    const { data: p } = await supabase.from("tenant_products").select("id,sku,app_store_product_id")
+    const { data: p } = await supabase.from("tenant_products").select("id,sku,app_store_product_id,play_product_id")
       .eq("tenant_id", tenantId).eq(productLookupColumn(sentSku), sentSku).maybeSingle()
     product = p ?? null
   }
@@ -115,16 +115,18 @@ serve(async (req: Request): Promise<Response> => {
     .eq("tenant_id", tenantId).eq("id", reason.coupon_id).maybeSingle()
   if (!coupon || !redeemableNow(coupon as OfferCoupon)) return json(200, { action: "none" })
 
-  // The buyer's plan can't carry this discount on Play (e.g. "3 months" on an annual plan): offer it on a plan that
-  // can — the honest offer, never a longer discount than promised. Monthly first.
-  if (platform === "android" && !(product && (coupon as OfferCoupon).googleplay_offer_ids?.[product.id])) {
-    const ids = Object.keys((coupon as OfferCoupon).googleplay_offer_ids ?? {})
-    if (ids.length) {
-      const { data: alts } = await supabase.from("tenant_products").select("id,sku,app_store_product_id,interval")
-        .eq("tenant_id", tenantId).in("id", ids)
-      const alt = pickOfferPlan(alts ?? [])
-      if (alt) product = alt
-    }
+  // The buyer's Play plan can't carry this discount (e.g. "3 months" on an annual plan). An app that follows the
+  // returned sku (`planSwitch`, SDK ≥ 3.0.17) gets it on a plan that can — Monthly first. An older app would show the
+  // discount on its own plan and Play would charge the full price, so it gets no offer at all.
+  const offerIds = (coupon as OfferCoupon).googleplay_offer_ids ?? {}
+  const playLaneMissing = platform === "android" && !!product?.play_product_id && !offerIds[product.id]
+  if (playLaneMissing) {
+    const alt = body.planSwitch === true && Object.keys(offerIds).length
+      ? pickOfferPlan((await supabase.from("tenant_products").select("id,sku,app_store_product_id,play_product_id,interval")
+        .eq("tenant_id", tenantId).in("id", Object.keys(offerIds))).data ?? [])
+      : null
+    if (!alt) return json(200, { action: "none" })
+    product = alt
   }
   const offerSku = product?.sku ?? sku
 
